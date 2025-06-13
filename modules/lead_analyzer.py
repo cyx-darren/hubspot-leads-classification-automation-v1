@@ -79,6 +79,27 @@ def load_product_catalog(file_path="./data/Product_Catalogue.csv"):
     
     return products
 
+def is_auto_generated_note(text):
+    """Check if the text is an auto-generated staff note"""
+    if not text:
+        return False
+        
+    # Key phrases that identify auto-generated notes
+    auto_note_indicators = [
+        "A friendly reminder to all Sales Agents",
+        "EASYPRINT is dedicated to providing the highest quality",
+        "There are certain customers that we need to follow",
+        "commonly asked questions",
+        "When to give E-invoicing credit terms",
+        "Sample Lead Time and Cost",
+        "Lanyard Ordering Lead Time",
+        "freshdesk.com/a/solutions/articles"
+    ]
+    
+    # If text contains multiple indicators, it's likely auto-generated
+    matches = sum(1 for indicator in auto_note_indicators if indicator in text)
+    return matches >= 2
+
 def get_ticket_conversations(ticket_id: int) -> List[Dict]:
     """Get all conversations for a specific ticket"""
     if not FRESHDESK_API_KEY or not FRESHDESK_DOMAIN:
@@ -402,6 +423,11 @@ def analyze_lead_products(email: str, product_catalog: List[Dict], start_date: d
                 # Skip if body is None or empty
                 if not body_text:
                     print(f"      DEBUG: Empty conversation {j+1}")
+                    continue
+                
+                # Skip auto-generated notes
+                if is_auto_generated_note(body_text):
+                    print(f"      DEBUG: Skipping auto-generated note {j+1}")
                     continue
                 
                 # Focus on customer messages (not internal staff responses)
