@@ -46,6 +46,16 @@ def load_product_catalog(file_path="./data/Product_Catalogue.csv"):
     try:
         df = pd.read_csv(file_path)
         print_colored(f"✓ Loaded product catalog with {len(df)} products", Colors.GREEN)
+        
+        # Debug: Show sample products and columns
+        print(f"DEBUG: Product catalog columns: {list(df.columns)}")
+        if len(df) > 0:
+            print(f"DEBUG: Sample products from catalog:")
+            for i, row in df.head(5).iterrows():
+                product_name = row.get('Product Name', 'N/A')
+                category = row.get('Category', 'N/A')
+                print(f"  - {product_name} (Category: {category})")
+        
         return df
     except FileNotFoundError:
         print_colored(f"Error: Product catalog not found at {file_path}", Colors.RED)
@@ -201,32 +211,80 @@ def get_tickets_for_email_in_period(email: str, start_date: datetime, end_date: 
     return all_tickets
 
 def extract_product_mentions(text: str, product_catalog: pd.DataFrame) -> List[str]:
-    """Extract product mentions from text using product catalog"""
+    """Extract product mentions from text using product catalog with flexible matching"""
     if product_catalog.empty:
+        print("    DEBUG: Product catalog is empty")
         return []
     
     text_lower = text.lower()
     mentioned_products = []
     
-    # Check for exact product name matches
+    print(f"    DEBUG: Analyzing text: {text[:100]}...")
+    
+    # Check for exact and partial product name matches
     for _, product in product_catalog.iterrows():
         product_name = str(product.get('Product Name', '')).lower()
         category = str(product.get('Category', '')).lower()
         subcategory = str(product.get('Subcategory', '')).lower()
         
-        # Check for product name mentions
-        if product_name and len(product_name) > 3 and product_name in text_lower:
+        # Skip empty products
+        if not product_name or product_name == 'nan':
+            continue
+        
+        # Method 1: Exact match
+        if product_name in text_lower:
             mentioned_products.append(product_name.title())
+            print(f"    DEBUG: Exact match found: '{product_name}'")
+            continue
+        
+        # Method 2: Partial word matching for multi-word products
+        if len(product_name.split()) > 1:
+            product_words = [word for word in product_name.split() if len(word) > 3]
+            matches = sum(1 for word in product_words if word in text_lower)
+            
+            # If more than half the significant words match, consider it a match
+            if matches >= len(product_words) / 2 and matches > 0:
+                mentioned_products.append(product_name.title())
+                print(f"    DEBUG: Partial match found: '{product_name}' (matched {matches}/{len(product_words)} words)")
+                continue
+        
+        # Method 3: Check for key product keywords
+        product_keywords = product_name.split()
+        for keyword in product_keywords:
+            if len(keyword) > 4 and keyword in text_lower:
+                # Check if it's a meaningful keyword (not common words)
+                common_words = ['the', 'and', 'with', 'for', 'custom', 'premium', 'standard']
+                if keyword not in common_words:
+                    mentioned_products.append(f"Keyword: {keyword.title()}")
+                    print(f"    DEBUG: Keyword match found: '{keyword}' from product '{product_name}'")
         
         # Check for category mentions
         if category and len(category) > 3 and category in text_lower:
             mentioned_products.append(f"Category: {category.title()}")
+            print(f"    DEBUG: Category match found: '{category}'")
         
         # Check for subcategory mentions
         if subcategory and len(subcategory) > 3 and subcategory in text_lower:
             mentioned_products.append(f"Subcategory: {subcategory.title()}")
+            print(f"    DEBUG: Subcategory match found: '{subcategory}'")
     
-    return list(set(mentioned_products))  # Remove duplicates
+    # Method 4: Look for common product patterns
+    product_patterns = [
+        'bag', 'bags', 'adapter', 'adapters', 'shirt', 'shirts', 'mug', 'mugs', 
+        'cap', 'caps', 'bottle', 'bottles', 'lanyard', 'lanyards', 'umbrella', 'umbrellas',
+        'pen', 'pens', 'notebook', 'notebooks', 'keychain', 'keychains', 'tote', 'drawstring',
+        'polo', 'hoodie', 'jacket', 'vest', 'backpack', 'briefcase', 'folder', 'organizer'
+    ]
+    
+    for pattern in product_patterns:
+        if pattern in text_lower:
+            mentioned_products.append(f"Product Pattern: {pattern.title()}")
+            print(f"    DEBUG: Product pattern found: '{pattern}'")
+    
+    unique_products = list(set(mentioned_products))
+    print(f"    DEBUG: Total unique products found: {len(unique_products)}")
+    
+    return unique_products
 
 def analyze_lead_products(email: str, product_catalog: pd.DataFrame, start_date: datetime, end_date: datetime) -> Dict:
     """Analyze a lead's product interests based on Freshdesk tickets"""
@@ -239,7 +297,8 @@ def analyze_lead_products(email: str, product_catalog: pd.DataFrame, start_date:
         'analysis_period': f"{start_date.strftime('%B %Y')} - {end_date.strftime('%B %Y')}"
     }
     
-    print(f"  DEBUG: Starting analysis for {email}")
+    print(f"  DEBUG: Starting product analysis for {email}")
+    print(f"  DEBUG: Product catalog has {len(product_catalog)} products")
     
     # Get tickets for the specified period
     tickets = get_tickets_for_email_in_period(email, start_date, end_date)
@@ -248,42 +307,62 @@ def analyze_lead_products(email: str, product_catalog: pd.DataFrame, start_date:
     print(f"  DEBUG: Lead analyzer found {len(tickets)} tickets for {email}")
     
     if not tickets:
+        print(f"  DEBUG: No tickets found for {email}, skipping product analysis")
         return result
     
     all_product_mentions = []
     
-    for ticket in tickets:
+    for i, ticket in enumerate(tickets):
         ticket_id = ticket.get('id')
         subject = ticket.get('subject', '')
         description = ticket.get('description_text', '')
         
+        print(f"    DEBUG: Analyzing ticket {i+1}/{len(tickets)} - ID: {ticket_id}")
+        print(f"    DEBUG: Subject: {subject}")
+        print(f"    DEBUG: Available ticket fields: {list(ticket.keys())}")
+        
+        # Check custom fields
+        if 'custom_fields' in ticket:
+            print(f"    DEBUG: Custom fields: {ticket['custom_fields']}")
+        
         result['ticket_subjects'].append(subject)
         
         # Extract products from ticket subject and description
-        ticket_text = f"{subject} {description}".lower()
+        print(f"    DEBUG: Extracting products from subject and description...")
+        ticket_text = f"{subject} {description}"
         products_in_ticket = extract_product_mentions(ticket_text, product_catalog)
+        print(f"    DEBUG: Found {len(products_in_ticket)} products in ticket content")
         all_product_mentions.extend(products_in_ticket)
         
         # Get conversations for this ticket
+        print(f"    DEBUG: Getting conversations for ticket {ticket_id}...")
         conversations = get_ticket_conversations(ticket_id)
+        print(f"    DEBUG: Found {len(conversations)} conversations")
         
-        for conv in conversations:
+        for j, conv in enumerate(conversations):
             if isinstance(conv, dict):
                 body_text = conv.get('body_text', '')
                 if body_text:
+                    print(f"      DEBUG: Analyzing conversation {j+1}: {body_text[:50]}...")
                     # Store snippet for analysis
                     snippet = body_text[:200] + "..." if len(body_text) > 200 else body_text
                     result['conversation_snippets'].append(snippet)
                     
                     # Extract products from conversation
                     conv_products = extract_product_mentions(body_text, product_catalog)
+                    print(f"      DEBUG: Found {len(conv_products)} products in conversation")
                     all_product_mentions.extend(conv_products)
         
         # Small delay to avoid rate limiting
         time.sleep(0.1)
     
     # Remove duplicates and sort
-    result['product_mentions'] = sorted(list(set(all_product_mentions)))
+    unique_products = sorted(list(set(all_product_mentions)))
+    result['product_mentions'] = unique_products
+    
+    print(f"  DEBUG: Final product analysis for {email}:")
+    print(f"  DEBUG: Total product mentions found: {len(unique_products)}")
+    print(f"  DEBUG: Products: {unique_products}")
     
     return result
 
