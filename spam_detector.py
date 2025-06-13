@@ -387,45 +387,59 @@ def classify_email(email: str, whitelist: List[str]) -> Dict:
 
     return result
 
-def save_results_to_csv(results: List[Dict], output_file: str):
-    """Save classification results to a CSV file with detailed explanations."""
+def save_results_to_csv(results: List[Dict]):
+    """Save classification results to separate CSV files for spam and not spam."""
+    # Separate results by classification
+    not_spam_results = [r for r in results if r['classification'] == 'Not Spam']
+    spam_results = [r for r in results if r['classification'] == 'Spam']
+    
+    fieldnames = ['email', 'classification', 'reason', 'ticket_count']
+    
+    # Save not spam emails
     try:
-        with open(output_file, 'w', newline='') as csvfile:
-            fieldnames = ['email', 'classification', 'reason', 'ticket_count', 'date_range', 'detailed_explanation']
+        with open('not_spam_leads.csv', 'w', newline='') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-
             writer.writeheader()
-            for result in results:
-                # Create a detailed explanation
-                detailed_explanation = ""
+            
+            for result in not_spam_results:
                 ticket_count = 0
-
-                # Add date range
-                if "details" in result and "date_range" in result["details"]:
-                    detailed_explanation += f"Analysis Period: {result['details']['date_range']}\n"
-
-                # Add ticket IDs if available
-                if "details" in result and "ticket_ids" in result["details"] and result["details"]["ticket_ids"]:
-                    ticket_count = len(result["details"]["ticket_ids"])
-                    detailed_explanation += f"Tickets found: {', '.join(result['details']['ticket_ids'])}"
-
-                # Add sales check details if available
-                if "details" in result and "sales_checks" in result["details"] and result["details"]["sales_checks"]:
-                    sales_checks = result["details"]["sales_checks"]
-                    for check in sales_checks:
-                        detailed_explanation += f"\nTicket {check['ticket_id']} (created: {check['created_at']}): {check['details']}"
-
+                if "details" in result and "ticket_count" in result["details"]:
+                    ticket_count = result["details"]["ticket_count"]
+                
                 writer.writerow({
                     'email': result['email'],
                     'classification': result['classification'],
                     'reason': result['reason'],
-                    'ticket_count': ticket_count,
-                    'date_range': result.get('details', {}).get('date_range', ''),
-                    'detailed_explanation': detailed_explanation
+                    'ticket_count': ticket_count
                 })
-        print_colored(f"Results saved to {output_file}", Colors.GREEN)
+        
+        print_colored(f"Not spam results saved to not_spam_leads.csv ({len(not_spam_results)} emails)", Colors.GREEN)
     except Exception as e:
-        print_colored(f"Error saving results to CSV: {e}", Colors.RED)
+        print_colored(f"Error saving not spam results to CSV: {e}", Colors.RED)
+    
+    # Save spam emails
+    try:
+        with open('spam_leads.csv', 'w', newline='') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            
+            for result in spam_results:
+                ticket_count = 0
+                if "details" in result and "ticket_count" in result["details"]:
+                    ticket_count = result["details"]["ticket_count"]
+                
+                writer.writerow({
+                    'email': result['email'],
+                    'classification': result['classification'],
+                    'reason': result['reason'],
+                    'ticket_count': ticket_count
+                })
+        
+        print_colored(f"Spam results saved to spam_leads.csv ({len(spam_results)} emails)", Colors.GREEN)
+    except Exception as e:
+        print_colored(f"Error saving spam results to CSV: {e}", Colors.RED)
+    
+    return len(not_spam_results), len(spam_results)
 
 def main():
     print_colored("\n=== Spam Detector (March - May 2025) ===", Colors.BOLD + Colors.BLUE)
@@ -520,19 +534,15 @@ def main():
                     print(f"  - Ticket {check['ticket_id']} (created: {check['created_at']}): {check['details']}")
 
     # Save results
-    output_file = f"spam_detection_results_mar_may_2025.csv"
-    save_results_to_csv(results, output_file)
-
-    # Summary
-    spam_count = sum(1 for r in results if r['classification'] == 'Spam')
-    not_spam_count = sum(1 for r in results if r['classification'] == 'Not Spam')
+    not_spam_count, spam_count = save_results_to_csv(results)
 
     print_colored("\n=== Spam Detection Summary ===", Colors.BOLD + Colors.BLUE)
     print_colored(f"Analysis Period: {START_DATE.strftime('%B %d, %Y')} - {END_DATE.strftime('%B %d, %Y')}", Colors.BLUE)
     print(f"Total emails processed: {len(results)}")
     print(f"Spam emails detected: {spam_count}")
     print(f"Non-spam emails detected: {not_spam_count}")
-    print_colored(f"Results saved to {output_file}", Colors.GREEN)
+    
+    return not_spam_count, spam_count
 
 if __name__ == "__main__":
     try:
