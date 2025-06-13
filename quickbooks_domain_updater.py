@@ -36,7 +36,8 @@ GENERIC_DOMAINS = {
     '163.com',
     '126.com',
     'cyberlinks7.onmicrosoft.com',
-    'easyprintsg.com'
+    'easyprintsg.com',
+    'singnet.com.sg'
 }
 
 class QuickBooksAPI:
@@ -237,11 +238,33 @@ def create_backup(filename: str, backup_filename: str):
     except Exception as e:
         print(f"✗ Error creating backup: {e}")
 
-def extract_domains_from_customers(customers: List[dict]) -> Set[str]:
-    """Extract unique domains from customer email addresses, excluding generic domains"""
+def extract_main_domain(domain: str) -> str:
+    """Extract main domain from subdomain
+    e.g., consultant.udtrucks.com -> udtrucks.com
+    """
+    parts = domain.split('.')
+    
+    # Handle standard domains (e.g., subdomain.domain.com)
+    if len(parts) >= 3 and parts[-2] not in ['com', 'co', 'org', 'net']:
+        # Return last two parts for .com, .org, etc
+        return '.'.join(parts[-2:])
+    
+    # Handle country-code domains (e.g., subdomain.domain.com.sg)
+    elif len(parts) >= 4 and parts[-2] in ['com', 'co', 'org', 'net'] and len(parts[-1]) == 2:
+        # Return last three parts for .com.sg, .co.uk, etc
+        return '.'.join(parts[-3:])
+    
+    # Return as-is if it's already a main domain
+    return domain
+
+def extract_domains_from_customers(customers: List[dict]) -> tuple[Set[str], int]:
+    """Extract unique domains from customer email addresses, excluding generic domains
+    Returns tuple of (domains_set, main_domains_added_count)
+    """
     domains = set()
     email_count = 0
     excluded_count = 0
+    main_domains_added = set()
     
     print("Extracting domains from customer emails...")
     
@@ -255,8 +278,16 @@ def extract_domains_from_customers(customers: List[dict]) -> Set[str]:
                 if domain and '.' in domain:
                     # Skip generic email domains
                     if domain not in GENERIC_DOMAINS:
+                        # Add the exact domain
                         domains.add(domain)
                         email_count += 1
+                        
+                        # Also add main domain if this is a subdomain
+                        main_domain = extract_main_domain(domain)
+                        if main_domain != domain:
+                            domains.add(main_domain)
+                            main_domains_added.add(main_domain)
+                            print(f"  Added main domain {main_domain} for subdomain {domain}")
                     else:
                         excluded_count += 1
                         print(f"  Skipping generic domain: {domain}")
@@ -269,8 +300,16 @@ def extract_domains_from_customers(customers: List[dict]) -> Set[str]:
                 if domain and '.' in domain:
                     # Skip generic email domains
                     if domain not in GENERIC_DOMAINS:
+                        # Add the exact domain
                         domains.add(domain)
                         email_count += 1
+                        
+                        # Also add main domain if this is a subdomain
+                        main_domain = extract_main_domain(domain)
+                        if main_domain != domain:
+                            domains.add(main_domain)
+                            main_domains_added.add(main_domain)
+                            print(f"  Added main domain {main_domain} for subdomain {domain}")
                     else:
                         excluded_count += 1
                         print(f"  Skipping generic domain: {domain}")
@@ -278,7 +317,9 @@ def extract_domains_from_customers(customers: List[dict]) -> Set[str]:
     print(f"✓ Processed {email_count} business email addresses")
     print(f"✓ Excluded {excluded_count} emails from generic domains")
     print(f"✓ Found {len(domains)} unique business domains from QuickBooks")
-    return domains
+    if main_domains_added:
+        print(f"✓ Added {len(main_domains_added)} main domains from subdomains")
+    return domains, len(main_domains_added)
 
 def save_merged_domains_to_csv(all_domains: Set[str], filename: str = 'Unique_Email_Domains.csv'):
     """Save merged domains to CSV file"""
@@ -330,7 +371,7 @@ def main():
         
         # Step 5: Extract domains from QuickBooks
         print("\n5. Extracting domains...")
-        qb_domains = extract_domains_from_customers(customers)
+        qb_domains, main_domains_added_count = extract_domains_from_customers(customers)
         
         if not qb_domains:
             print("No email domains found in QuickBooks")
@@ -358,7 +399,10 @@ def main():
             save_merged_domains_to_csv(all_domains, filename)
             
             print(f"\n✓ Domain update completed successfully!")
-            print(f"  - Added {len(new_domains)} new domains")
+            if main_domains_added_count > 0:
+                print(f"  - Added {len(new_domains)} new domains (including {main_domains_added_count} main domains from subdomains)")
+            else:
+                print(f"  - Added {len(new_domains)} new domains")
             print(f"  - Total domains now: {len(all_domains)}")
             print(f"  - Backup saved as: {backup_filename}")
             
