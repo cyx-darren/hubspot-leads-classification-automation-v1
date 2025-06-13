@@ -59,6 +59,12 @@ def check_required_files(leads_file):
     else:
         print_colored("✓ ./data/Unique_Email_Domains.csv found", "green")
     
+    # Check for Product_Catalogue.csv (optional for lead analysis)
+    if not os.path.exists('./data/Product_Catalogue.csv'):
+        print_colored("⚠ ./data/Product_Catalogue.csv not found (optional for lead analysis)", "yellow")
+    else:
+        print_colored("✓ ./data/Product_Catalogue.csv found", "green")
+    
     if missing_files:
         print_colored("\nError: Missing required files:", "red")
         for file in missing_files:
@@ -223,10 +229,62 @@ def run_spam_detection(leads_file):
         print_colored(f"Error during spam detection: {e}", "red")
         raise
 
-def show_final_summary(not_spam_count, spam_count, total_processed, domains_updated=True, leads_file=""):
+def run_lead_analysis():
+    """Run lead analysis on not_spam leads"""
+    print("Step 3: Analyzing lead products and Freshdesk data...")
+    print("-" * 50)
+    
+    try:
+        from modules import lead_analyzer
+        
+        # Check if not_spam_leads.csv exists
+        input_file = "./output/not_spam_leads.csv"
+        if not os.path.exists(input_file):
+            print_colored(f"Warning: {input_file} not found. Skipping lead analysis.", "yellow")
+            return 0
+        
+        # Check if Product_Catalogue.csv exists
+        catalog_file = "./data/Product_Catalogue.csv"
+        if not os.path.exists(catalog_file):
+            print_colored(f"Warning: {catalog_file} not found. Analysis will be limited.", "yellow")
+        
+        # Run lead analysis using February 2025 as default period
+        # You can modify these dates or make them configurable
+        from datetime import datetime, timezone
+        start_date = datetime(2025, 2, 1, tzinfo=timezone.utc)
+        end_date = datetime(2025, 2, 28, 23, 59, 59, tzinfo=timezone.utc)
+        
+        success = lead_analyzer.analyze_leads(
+            input_csv_path="./output/not_spam_leads.csv",
+            output_csv_path="./output/leads_with_products.csv",
+            start_date=start_date,
+            end_date=end_date
+        )
+        
+        if success:
+            print_colored("✓ Lead analysis completed successfully!", "green")
+            # Count analyzed leads
+            try:
+                import pandas as pd
+                df = pd.read_csv("./output/leads_with_products.csv")
+                return len(df)
+            except:
+                return 0
+        else:
+            print_colored("✗ Lead analysis failed", "red")
+            return 0
+            
+    except ImportError as e:
+        print_colored(f"Error importing lead analyzer: {e}", "red")
+        return 0
+    except Exception as e:
+        print_colored(f"Error during lead analysis: {e}", "red")
+        return 0
+
+def show_final_summary(not_spam_count, spam_count, total_processed, analyzed_leads_count=0, domains_updated=True, leads_file=""):
     """Show final summary with results"""
     print("\n" + "=" * 50)
-    print("Step 3: Final Summary")
+    print("Step 4: Final Summary")
     print("-" * 50)
     
     if domains_updated:
@@ -239,20 +297,28 @@ def show_final_summary(not_spam_count, spam_count, total_processed, domains_upda
     print_colored(f"✅ Not Spam: {not_spam_count} emails (saved to ./output/not_spam_leads.csv)", "green")
     print_colored(f"🚫 Spam: {spam_count} emails (saved to ./output/spam_leads.csv)", "red")
     
+    if analyzed_leads_count > 0:
+        print_colored(f"🔍 Analyzed Leads: {analyzed_leads_count} emails (saved to ./output/leads_with_products.csv)", "blue")
+    
     # Calculate percentages
     if total_processed > 0:
         not_spam_percent = (not_spam_count / total_processed) * 100
         spam_percent = (spam_count / total_processed) * 100
         print(f"📊 Distribution: {not_spam_percent:.1f}% Not Spam, {spam_percent:.1f}% Spam")
+        
+        if analyzed_leads_count > 0:
+            analyzed_percent = (analyzed_leads_count / not_spam_count) * 100 if not_spam_count > 0 else 0
+            print(f"🔍 Lead Analysis: {analyzed_percent:.1f}% of not-spam leads analyzed")
     
     print("\n" + "=" * 50)
-    print_colored("🎉 Spam detection workflow complete!", "green")
+    print_colored("🎉 Complete workflow finished!", "green")
     
-    # Placeholder for future modules
-    print_colored("\n📋 Next Steps (Future Modules):", "blue")
-    print("  Module 2: [Placeholder for next automation script]")
-    print("  Module 3: [Placeholder for third automation script]")
-    print(f"  Input for next module: ./output/not_spam_leads.csv ({not_spam_count} emails)")
+    # Updated workflow steps
+    print_colored("\n📋 Workflow Completed:", "blue")
+    print("  ✓ Step 1: Updated domains from QuickBooks" if domains_updated else "  ⚠ Step 1: Skipped QuickBooks update")
+    print("  ✓ Step 2: Spam detection completed")
+    print(f"  ✓ Step 3: Lead analysis completed" if analyzed_leads_count > 0 else "  ⚠ Step 3: Lead analysis skipped/failed")
+    print(f"\n📤 Final output: ./output/leads_with_products.csv ({analyzed_leads_count} analyzed leads)" if analyzed_leads_count > 0 else f"\n📤 Final output: ./output/not_spam_leads.csv ({not_spam_count} clean leads)")
 
 def main():
     # Parse command line arguments
@@ -314,8 +380,20 @@ def main():
             print_colored("\nSpam detection failed. Exiting.", "red")
             sys.exit(1)
         
-        # Step 3: Show final summary
-        show_final_summary(not_spam_count, spam_count, total_processed, domains_updated, leads_file)
+        print("\n" + "=" * 50)
+        
+        # Step 3: Run lead analysis
+        analyzed_leads_count = 0
+        try:
+            analyzed_leads_count = run_lead_analysis()
+        except KeyboardInterrupt:
+            print_colored("\nWorkflow interrupted by user. Exiting.", "yellow")
+            sys.exit(0)
+        except Exception:
+            print_colored("\nLead analysis failed, but continuing to summary.", "yellow")
+        
+        # Step 4: Show final summary
+        show_final_summary(not_spam_count, spam_count, total_processed, analyzed_leads_count, domains_updated, leads_file)
         
     except KeyboardInterrupt:
         print_colored("\nWorkflow interrupted by user. Exiting.", "yellow")
