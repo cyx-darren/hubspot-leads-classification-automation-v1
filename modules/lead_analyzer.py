@@ -101,8 +101,14 @@ def is_ticket_in_analysis_period(ticket: Dict, start_date: datetime, end_date: d
 
 def get_tickets_for_email_in_period(email: str, start_date: datetime, end_date: datetime) -> List[Dict]:
     """Get all tickets for an email within a specific date range"""
+    print(f"  DEBUG: Fetching tickets for {email}...")
+    print(f"  DEBUG: Date range: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+    
     if not FRESHDESK_API_KEY or not FRESHDESK_DOMAIN:
+        print_colored("  DEBUG: Missing API credentials!", Colors.RED)
         return []
+    
+    print(f"  DEBUG: Using domain: {FRESHDESK_DOMAIN}")
     
     auth = HTTPBasicAuth(FRESHDESK_API_KEY, "X")
     headers = {"Content-Type": "application/json"}
@@ -110,6 +116,7 @@ def get_tickets_for_email_in_period(email: str, start_date: datetime, end_date: 
     try:
         # Try search approach first
         search_url = f"https://{FRESHDESK_DOMAIN}.freshdesk.com/api/v2/search/tickets"
+        print(f"  DEBUG: Search URL: {search_url}")
         
         # Format dates for Freshdesk query
         start_str = start_date.strftime("%Y-%m-%d")
@@ -117,29 +124,42 @@ def get_tickets_for_email_in_period(email: str, start_date: datetime, end_date: 
         
         query = f"email:'{email}' AND created_at:>'{start_str}' AND created_at:<'{end_str}'"
         params = {"query": query}
+        print(f"  DEBUG: Query: {query}")
         
         response = requests.get(search_url, headers=headers, auth=auth, params=params)
+        print(f"  DEBUG: Search response status: {response.status_code}")
         
         if response.status_code == 200:
             tickets = response.json()
+            print(f"  DEBUG: Found {len(tickets)} tickets from search")
             if tickets:
                 # Filter tickets to ensure they're in date range
                 filtered_tickets = [t for t in tickets if is_ticket_in_analysis_period(t, start_date, end_date)]
+                print(f"  DEBUG: {len(filtered_tickets)} tickets after date filtering")
                 return filtered_tickets
+        else:
+            print(f"  DEBUG: Search failed with error: {response.text}")
         
         # Fallback: get all tickets for email and filter
+        print("  DEBUG: Trying fallback approach...")
         params = {"query": f"email:'{email}'"}
         response = requests.get(search_url, headers=headers, auth=auth, params=params)
+        print(f"  DEBUG: Fallback response status: {response.status_code}")
         
         if response.status_code == 200:
             all_tickets = response.json()
+            print(f"  DEBUG: Found {len(all_tickets)} total tickets for email")
             # Filter by date range using our date checking function
             filtered_tickets = [t for t in all_tickets if is_ticket_in_analysis_period(t, start_date, end_date)]
+            print(f"  DEBUG: {len(filtered_tickets)} tickets after date filtering")
             return filtered_tickets
+        else:
+            print(f"  DEBUG: Fallback failed with error: {response.text}")
         
+        print("  DEBUG: No tickets found with any approach")
         return []
     except Exception as e:
-        print_colored(f"Error getting tickets for {email}: {e}", Colors.RED)
+        print_colored(f"  DEBUG: Exception getting tickets for {email}: {e}", Colors.RED)
         return []
 
 def extract_product_mentions(text: str, product_catalog: pd.DataFrame) -> List[str]:
@@ -181,9 +201,13 @@ def analyze_lead_products(email: str, product_catalog: pd.DataFrame, start_date:
         'analysis_period': f"{start_date.strftime('%B %Y')} - {end_date.strftime('%B %Y')}"
     }
     
+    print(f"  DEBUG: Starting analysis for {email}")
+    
     # Get tickets for the specified period
     tickets = get_tickets_for_email_in_period(email, start_date, end_date)
     result['total_tickets'] = len(tickets)
+    
+    print(f"  DEBUG: Lead analyzer found {len(tickets)} tickets for {email}")
     
     if not tickets:
         return result
@@ -335,8 +359,45 @@ def analyze_leads(input_csv_path="./output/not_spam_leads.csv",
         print_colored(f"Error saving results: {e}", Colors.RED)
         return False
 
+def test_ticket_comparison(email: str, start_date: datetime, end_date: datetime):
+    """Test function to compare lead analyzer vs spam detector ticket fetching"""
+    print_colored(f"\n=== Testing ticket fetching for {email} ===", Colors.BOLD + Colors.BLUE)
+    
+    # Test lead analyzer approach
+    print_colored("Testing Lead Analyzer approach:", Colors.BLUE)
+    lead_tickets = get_tickets_for_email_in_period(email, start_date, end_date)
+    print_colored(f"Lead analyzer found: {len(lead_tickets)} tickets", Colors.GREEN if lead_tickets else Colors.RED)
+    
+    # Test spam detector approach (import and use same function)
+    try:
+        from modules.spam_detector import SpamDetector
+        detector = SpamDetector(start_date=start_date, end_date=end_date)
+        print_colored("Testing Spam Detector approach:", Colors.BLUE)
+        spam_tickets = detector.get_tickets_for_email(email)
+        print_colored(f"Spam detector found: {len(spam_tickets)} tickets", Colors.GREEN if spam_tickets else Colors.RED)
+        
+        if spam_tickets:
+            print("Sample ticket from spam detector:")
+            print(f"  ID: {spam_tickets[0].get('id')}")
+            print(f"  Subject: {spam_tickets[0].get('subject', 'N/A')}")
+            print(f"  Created: {spam_tickets[0].get('created_at', 'N/A')}")
+            
+    except Exception as e:
+        print_colored(f"Error testing spam detector: {e}", Colors.RED)
+
 def main():
     """Standalone main function for testing"""
+    # Test with a known email from the not_spam_leads.csv
+    start_date = datetime(2025, 3, 1, tzinfo=timezone.utc)
+    end_date = datetime(2025, 5, 31, 23, 59, 59, tzinfo=timezone.utc)
+    
+    # Test with first few emails from the not_spam list
+    test_emails = ["james.lim@outlook.com", "david@aeacorp.com.sg", "admin@sgcarstore.com"]
+    
+    for email in test_emails:
+        test_ticket_comparison(email, start_date, end_date)
+        print()
+    
     return analyze_leads()
 
 if __name__ == "__main__":
