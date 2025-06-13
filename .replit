@@ -13,3 +13,15 @@ requiredFiles = [".replit", "replit.nix"]
 [deployment]
 run = ["python3", "main.py"]
 deploymentTarget = "cloudrun"
+
+[workflows]
+runButton = "Run Spam Detection"
+
+[[workflows.workflow]]
+name = "Run Spam Detection"
+author = 23958972
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python main.py"

@@ -8,6 +8,10 @@ from typing import List, Dict, Tuple
 from requests.auth import HTTPBasicAuth
 from datetime import datetime, timezone
 import pytz
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # API configuration - get from environment variables
 FRESHDESK_API_KEY = os.environ.get('FRESHDESK_API_KEY')
