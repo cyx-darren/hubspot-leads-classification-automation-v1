@@ -2,4 +2,13 @@
 requests
 python-dotenv
 pytz
+python-quickbooks
+intuit-oauth
 pandas
+numpy
+matplotlib
+seaborn
+PyPDF2
+fuzzywuzzy
+python-Levenshtein
+openai
