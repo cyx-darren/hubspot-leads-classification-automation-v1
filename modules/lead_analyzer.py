@@ -478,6 +478,13 @@ def extract_product_mentions(text: str, product_catalog: List[Dict], is_subject=
                                 print(f"    DEBUG: Skipping cross-category match: bag phrase '{phrase}' to non-bag product '{match_name}'")
                                 continue
                             
+                            # Special lanyard handling in fuzzy matching - FIXED
+                            if 'lanyard' in phrase_lower and 'leather lanyard' in match_lower:
+                                # Only match to Leather Lanyards if "leather" is in the original text
+                                if 'leather' not in text_lower:
+                                    print(f"    DEBUG: Skipping Leather Lanyard match - no 'leather' in text: '{phrase}' → '{match_name}'")
+                                    continue
+                            
                             mentioned_products.append(match_name)
                             confidence_scores.append((match_name, score, 'fuzzy'))
                             print(f"    DEBUG: Conservative fuzzy match: '{phrase}' → '{match_name}' (confidence: {score})")
@@ -507,7 +514,7 @@ def extract_product_mentions(text: str, product_catalog: List[Dict], is_subject=
     
     # Priority 4: Product type indicators with special handling
     if len(mentioned_products) < 3:
-        # Special handling for lanyard detection
+        # Special handling for lanyard detection - FIXED LOGIC
         if 'lanyard' in text_lower:
             has_leather = 'leather' in text_lower
             has_keychain = 'keychain' in text_lower
@@ -520,7 +527,7 @@ def extract_product_mentions(text: str, product_catalog: List[Dict], is_subject=
             elif has_keychain:
                 lanyard_product = "Lanyard Keychain"
             else:
-                # Default for any other lanyard mention
+                # Default for ANY other lanyard mention (including "the lanyards")
                 lanyard_product = "Lanyards (With Printing)"
             
             # Check if this product hasn't been added yet
@@ -537,11 +544,14 @@ def extract_product_mentions(text: str, product_catalog: List[Dict], is_subject=
             'badges': [p for p in product_names if 'badge' in p.lower()],
             'pin badge': [p for p in product_names if 'badge' in p.lower() or 'pin' in p.lower()],
             'socks': [p for p in product_names if 'sock' in p.lower()],
+            'sock': [p for p in product_names if 'sock' in p.lower()],  # Added singular
             'wallet': [p for p in product_names if 'wallet' in p.lower()],
             'mug': [p for p in product_names if 'mug' in p.lower()],
             'bottle': [p for p in product_names if 'bottle' in p.lower()],
             'umbrella': [p for p in product_names if 'umbrella' in p.lower()],
             # New mappings for missing products
+            'keychains': [p for p in product_names if 'keychain' in p.lower()],  # Added keychain mapping
+            'keychain': [p for p in product_names if 'keychain' in p.lower()],   # Added keychain mapping
             'cards printing': [p for p in product_names if 'card' in p.lower() and ('business' in p.lower() or 'name' in p.lower())],
             'business cards': [p for p in product_names if 'card' in p.lower() and 'business' in p.lower()],
             'name cards': [p for p in product_names if 'card' in p.lower() and 'name' in p.lower()],
