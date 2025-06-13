@@ -12,6 +12,7 @@ import re
 from typing import List, Dict, Optional, Tuple
 import calendar
 import csv
+from fuzzywuzzy import fuzz, process
 
 # Get the project root directory when running directly
 if __name__ == "__main__":
@@ -246,8 +247,50 @@ def get_tickets_for_email_in_period(email: str, start_date: datetime, end_date: 
 
     return all_tickets
 
+def detect_buying_intent(text: str) -> bool:
+    """Detect if text contains buying intent phrases"""
+    if not text:
+        return False
+    
+    text_lower = text.lower()
+    
+    # Buying intent phrases
+    intent_phrases = [
+        'looking for', 'need quote', 'need quotation', 'interested in', 'want to order',
+        'would like to', 'planning to buy', 'require', 'seeking', 'in search of',
+        'can you provide', 'please quote', 'how much', 'price for', 'cost of',
+        'bulk order', 'corporate gift', 'promotional', 'customize', 'custom',
+        'inquiry', 'enquiry', 'request', 'rfq'
+    ]
+    
+    return any(phrase in text_lower for phrase in intent_phrases)
+
+def extract_quantities(text: str) -> List[str]:
+    """Extract quantity mentions from text"""
+    if not text:
+        return []
+    
+    # Regex patterns for quantities
+    quantity_patterns = [
+        r'\b(\d{1,5})\s*(pieces?|pcs?|units?|items?)\b',
+        r'\b(\d{1,5})\s*(dozen|hundreds?|thousands?)\b',
+        r'\bquantity\s*:?\s*(\d{1,5})\b',
+        r'\bqty\s*:?\s*(\d{1,5})\b',
+        r'\b(\d{1,5})\s*sets?\b'
+    ]
+    
+    quantities = []
+    for pattern in quantity_patterns:
+        matches = re.finditer(pattern, text.lower())
+        for match in matches:
+            quantity = match.group(1) if match.group(1).isdigit() else match.group(0)
+            unit = match.group(2) if len(match.groups()) > 1 else ""
+            quantities.append(f"{quantity} {unit}".strip())
+    
+    return list(set(quantities))  # Remove duplicates
+
 def extract_product_mentions(text: str, product_catalog: List[Dict], is_subject=False) -> List[str]:
-    """Extract product mentions from text with improved filtering and prioritization"""
+    """Extract product mentions from text with fuzzy matching and contextual understanding"""
     # Add null check at the start
     if not text:
         print("    DEBUG: Text is None or empty")
@@ -267,33 +310,65 @@ def extract_product_mentions(text: str, product_catalog: List[Dict], is_subject=
     # Safe to process now
     text_lower = text.lower()
     mentioned_products = []
+    confidence_scores = []  # Track confidence for sorting
     
     print(f"    DEBUG: Analyzing {'SUBJECT' if is_subject else 'text'}: {text[:100]}...")
     
-    # Priority 1: Exact product name matches (highest confidence)
+    # Check for buying intent
+    has_buying_intent = detect_buying_intent(text)
+    print(f"    DEBUG: Buying intent detected: {has_buying_intent}")
+    
+    # Extract quantities
+    quantities = extract_quantities(text)
+    if quantities:
+        print(f"    DEBUG: Quantities found: {quantities}")
+    
+    # Create list of product names for fuzzy matching
+    product_names = [p['name'] for p in product_catalog if p.get('name')]
+    
+    # Priority 1: Exact product name matches (highest confidence - 100)
     exact_matches = []
-    for product_dict in product_catalog:
-        product_name = product_dict['name']
-        if not product_name:
-            continue
-            
+    for product_name in product_names:
         if product_name.lower() in text_lower:
             exact_matches.append(product_name)
-            print(f"    DEBUG: Exact match found: '{product_name}'")
+            confidence_scores.append((product_name, 100, 'exact'))
+            print(f"    DEBUG: Exact match found: '{product_name}' (confidence: 100)")
     
-    # If we have exact matches, prioritize them
-    if exact_matches:
-        # For subjects, return exact matches immediately (highest priority)
-        if is_subject:
-            return exact_matches[:3]  # Limit to top 3 for subjects
-        else:
-            mentioned_products.extend(exact_matches)
+    mentioned_products.extend(exact_matches)
     
-    # Priority 2: Multi-word product partial matches (only if meaningful)
+    # Priority 2: Fuzzy matching for typos and variations (75+ confidence)
     if len(mentioned_products) < 5:  # Only if we don't have too many already
-        for product_dict in product_catalog:
-            product_name = product_dict['name']
-            if not product_name or product_name in [p for p in mentioned_products]:
+        # Split text into words and check each potential product mention
+        words = re.findall(r'\b\w+\b', text_lower)
+        
+        # Look for potential product phrases (1-4 words)
+        for i in range(len(words)):
+            for length in range(1, min(5, len(words) - i + 1)):
+                phrase = ' '.join(words[i:i+length])
+                
+                # Skip if too short or is a generic term
+                if len(phrase) < 3 or phrase in GENERIC_TERMS:
+                    continue
+                
+                # Use fuzzy matching to find similar product names
+                fuzzy_matches = process.extractBests(
+                    phrase, 
+                    product_names, 
+                    scorer=fuzz.token_sort_ratio,
+                    score_cutoff=75,
+                    limit=3
+                )
+                
+                for match_name, score in fuzzy_matches:
+                    if match_name not in [p for p, _, _ in confidence_scores]:
+                        mentioned_products.append(match_name)
+                        confidence_scores.append((match_name, score, 'fuzzy'))
+                        print(f"    DEBUG: Fuzzy match: '{phrase}' → '{match_name}' (confidence: {score})")
+    
+    # Priority 3: Multi-word product partial matches (60+ confidence)
+    if len(mentioned_products) < 5:
+        for product_name in product_names:
+            if product_name in [p for p, _, _ in confidence_scores]:
                 continue
             
             product_words = [word for word in product_name.lower().split() 
@@ -304,12 +379,13 @@ def extract_product_mentions(text: str, product_catalog: List[Dict], is_subject=
                 
                 # Need at least 2 meaningful words to match
                 if matches >= 2 and matches >= len(product_words) * 0.6:
+                    confidence = int((matches / len(product_words)) * 80)
                     mentioned_products.append(product_name)
-                    print(f"    DEBUG: Multi-word match: '{product_name}' (matched {matches}/{len(product_words)} words)")
+                    confidence_scores.append((product_name, confidence, 'partial'))
+                    print(f"    DEBUG: Multi-word match: '{product_name}' (matched {matches}/{len(product_words)} words, confidence: {confidence})")
     
-    # Priority 3: Look for specific product types mentioned (only if we don't have many matches)
+    # Priority 4: Product type indicators (50+ confidence)
     if len(mentioned_products) < 3:
-        # Focus on clear product mentions in the text
         product_indicators = {
             'bag': ['bag', 'bags', 'tote', 'drawstring', 'mesh bag', 'paper bag', 'shopping bag'],
             'adapter': ['adapter', 'adapters', 'travel adapter', 'power adapter'],
@@ -323,32 +399,46 @@ def extract_product_mentions(text: str, product_catalog: List[Dict], is_subject=
             for keyword in keywords:
                 if keyword in text_lower and keyword not in GENERIC_TERMS:
                     # Check if this maps to an actual product in catalog
-                    matching_products = [p['name'] for p in product_catalog 
-                                       if keyword.lower() in p['name'].lower() 
-                                       and p['name'] not in mentioned_products]
+                    matching_products = [p for p in product_names 
+                                       if keyword.lower() in p.lower() 
+                                       and p not in [prod for prod, _, _ in confidence_scores]]
                     
                     if matching_products:
                         # Add the most specific match
-                        best_match = min(matching_products, key=len)  # Shortest name = most specific
+                        best_match = min(matching_products, key=len)
                         mentioned_products.append(best_match)
-                        print(f"    DEBUG: Product type match: '{keyword}' → '{best_match}'")
-                        break  # Only one per category
+                        confidence_scores.append((best_match, 50, 'indicator'))
+                        print(f"    DEBUG: Product type match: '{keyword}' → '{best_match}' (confidence: 50)")
+                        break
     
-    # Remove duplicates and limit results
-    unique_products = []
-    seen = set()
-    for product in mentioned_products:
-        if product.lower() not in seen:
-            unique_products.append(product)
-            seen.add(product.lower())
+    # Sort by confidence (highest first)
+    if confidence_scores:
+        sorted_products = sorted(confidence_scores, key=lambda x: x[1], reverse=True)
+        
+        # Remove duplicates while preserving order
+        unique_products = []
+        seen = set()
+        for product, confidence, match_type in sorted_products:
+            if product.lower() not in seen:
+                unique_products.append(product)
+                seen.add(product.lower())
+        
+        # Limit results based on context
+        if has_buying_intent:
+            max_results = 5 if is_subject else 7  # More results if buying intent
+        else:
+            max_results = 3 if is_subject else 5
+        
+        final_products = unique_products[:max_results]
+        
+        print(f"    DEBUG: Final products sorted by confidence ({len(final_products)}):")
+        for i, product in enumerate(final_products):
+            match_info = next((conf, mtype) for p, conf, mtype in sorted_products if p == product)
+            print(f"    DEBUG:   {i+1}. '{product}' (confidence: {match_info[0]}, type: {match_info[1]})")
+        
+        return final_products
     
-    # Limit total results
-    max_results = 3 if is_subject else 5
-    final_products = unique_products[:max_results]
-    
-    print(f"    DEBUG: Final products ({len(final_products)}): {final_products}")
-    
-    return final_products
+    return []
 
 def analyze_lead_products(email: str, product_catalog: List[Dict], start_date: datetime, end_date: datetime) -> Dict:
     """Analyze a lead's product interests based on Freshdesk tickets"""

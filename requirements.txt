@@ -12,3 +12,7 @@ PyPDF2
 fuzzywuzzy
 python-Levenshtein
 openai
+fuzzywuzzy
+python-Levenshtein
+fuzzywuzzy
+python-Levenshtein
