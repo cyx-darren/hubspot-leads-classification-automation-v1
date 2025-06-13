@@ -1,196 +1,255 @@
-# main.py
-from modules.spam_detector import SpamDetector, main as run_spam_detector
-from modules.quickbooks_domain_updater import update_domains
 
-def main():
-    # Module selection menu (commented out for now)
-    # print("Select a module to run:")
-    # print("1. Spam Detector")
-    # print("2. QuickBooks Domain Updater")
-    # print("3. [Module 3 Placeholder]")
-    # choice = input("Enter your choice (1-3): ")
-
-    # if choice == '1':
-    print("Running Spam Detector...")
-    run_spam_detector()
-    # elif choice == '2':
-    #     print("Running QuickBooks Domain Updater...")
-    #     quickbooks_data = """
-    #     john.doe@example.com
-    #     jane.smith@test.com
-    #     support@newdomain.net
-    #     """
-    #     update_domains(quickbooks_data)
-    # elif choice == '3':
-    #     print("Running Module 3...")
-    #     # Add code to run module 3 here
-    # else:
-    #     print("Invalid choice.")
-
-if __name__ == "__main__":
-    main()
-```
-
-```python
-# modules/quickbooks_domain_updater.py
-import shutil
-from typing import Set
 import csv
+import requests
+import os
+import shutil
+from datetime import datetime
+from typing import Set, List, Dict
+from requests.auth import HTTPBasicAuth
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# QuickBooks API configuration
+QB_CLIENT_ID = os.environ.get('QUICKBOOKS_CLIENT_ID')
+QB_CLIENT_SECRET = os.environ.get('QUICKBOOKS_CLIENT_SECRET')
+QB_COMPANY_ID = os.environ.get('QUICKBOOKS_COMPANY_ID')
+QB_REFRESH_TOKEN = os.environ.get('QUICKBOOKS_REFRESH_TOKEN')
+
+# Generic domains to exclude from whitelist
+GENERIC_DOMAINS = {
+    'gmail.com',
+    'qq.com',
+    'hotmail.com',
+    'hotmail.co.uk',
+    'hotmail.sg',
+    'yahoo.com',
+    'yahoo.co.uk',
+    'yahoo.com.sg',
+    'outlook.com',
+    'live.com',
+    'icloud.com',
+    'mail.com',
+    'protonmail.com',
+    'aol.com',
+    'ymail.com',
+    'msn.com',
+    'me.com',
+    'proton.me',
+    'gmx.com',
+    '163.com',
+    '126.com',
+    'cyberlinks7.onmicrosoft.com',
+    'easyprintsg.com',
+    'singnet.com.sg'
+}
+
+def print_colored(text: str, color: str):
+    """Print text with color for better readability"""
+    colors = {
+        'RED': '\033[91m',
+        'GREEN': '\033[92m',
+        'YELLOW': '\033[93m',
+        'BLUE': '\033[94m',
+        'ENDC': '\033[0m'
+    }
+    print(f"{colors.get(color, '')}{text}{colors.get('ENDC', '')}")
+
+def get_access_token():
+    """Get access token using refresh token"""
+    token_url = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
+    
+    headers = {
+        'Authorization': f'Basic {QB_CLIENT_ID}:{QB_CLIENT_SECRET}',
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+    
+    data = {
+        'grant_type': 'refresh_token',
+        'refresh_token': QB_REFRESH_TOKEN
+    }
+    
+    try:
+        response = requests.post(token_url, headers=headers, data=data)
+        response.raise_for_status()
+        return response.json().get('access_token')
+    except Exception as e:
+        print_colored(f"Error getting access token: {e}", 'RED')
+        return None
+
+def extract_main_domain(domain):
+    """Extract main domain from subdomain
+    e.g., consultant.udtrucks.com -> udtrucks.com
+    """
+    parts = domain.split('.')
+    
+    # Handle standard domains (e.g., subdomain.domain.com)
+    if len(parts) >= 3 and parts[-2] not in ['com', 'co', 'org', 'net']:
+        # Return last two parts for .com, .org, etc
+        return '.'.join(parts[-2:])
+    
+    # Handle country-code domains (e.g., subdomain.domain.com.sg)
+    elif len(parts) >= 4 and parts[-2] in ['com', 'co', 'org', 'net'] and len(parts[-1]) == 2:
+        # Return last three parts for .com.sg, .co.uk, etc
+        return '.'.join(parts[-3:])
+    
+    # Return as-is if it's already a main domain
+    return domain
+
+def extract_customer_domains(customers):
+    """Extract unique domains from customer email addresses"""
+    domains = set()
+    generic_count = 0
+    subdomain_count = 0
+    
+    for customer in customers:
+        email = customer.get('PrimaryEmailAddr', {}).get('Address', '')
+        if email and '@' in email:
+            domain = email.split('@')[1].lower()
+            
+            # Skip generic domains
+            if domain in GENERIC_DOMAINS:
+                print(f"  Skipping generic domain: {domain}")
+                generic_count += 1
+                continue
+            
+            # Add the exact domain
+            domains.add(domain)
+            
+            # Also add main domain if this is a subdomain
+            main_domain = extract_main_domain(domain)
+            if main_domain != domain:
+                domains.add(main_domain)
+                print(f"  Added main domain {main_domain} for subdomain {domain}")
+                subdomain_count += 1
+    
+    print_colored(f"Excluded {generic_count} emails from generic domains", 'YELLOW')
+    if subdomain_count > 0:
+        print_colored(f"Added {subdomain_count} main domains from subdomains", 'BLUE')
+    
+    return domains
+
+def get_quickbooks_customers():
+    """Fetch customers from QuickBooks API"""
+    access_token = get_access_token()
+    if not access_token:
+        return []
+    
+    base_url = f"https://sandbox-quickbooks.api.intuit.com/v3/company/{QB_COMPANY_ID}"
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Accept': 'application/json'
+    }
+    
+    try:
+        url = f"{base_url}/query?query=SELECT * FROM Customer"
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        
+        data = response.json()
+        customers = data.get('QueryResponse', {}).get('Customer', [])
+        print_colored(f"Retrieved {len(customers)} customers from QuickBooks", 'GREEN')
+        return customers
+        
+    except Exception as e:
+        print_colored(f"Error fetching customers: {e}", 'RED')
+        return []
 
 def read_existing_domains_from_csv(filename: str) -> Set[str]:
-    """Reads existing email domains from a CSV file and returns them as a set."""
+    """Read existing domains from CSV file"""
     domains = set()
     try:
-        with open(filename, 'r', newline='') as csvfile:
-            reader = csv.reader(csvfile)
-            for row in reader:
-                if row:  # Ensure the row is not empty
-                    domains.add(row[0].strip().lower())  # Add domain to the set, stripping whitespace and lowercasing
+        with open(filename, 'r') as csvfile:
+            csv_reader = csv.reader(csvfile)
+            for row in csv_reader:
+                if row and row[0].strip():
+                    domains.add(row[0].strip().lower())
+        print_colored(f"Read {len(domains)} existing domains from {filename}", 'BLUE')
     except FileNotFoundError:
-        print(f"Warning: File not found: {filename}. Starting with an empty set of domains.")
+        print_colored(f"No existing file found at {filename}", 'YELLOW')
     except Exception as e:
-        print(f"An error occurred while reading {filename}: {e}")
+        print_colored(f"Error reading existing domains: {e}", 'RED')
+    
     return domains
-
-def extract_domains_from_quickbooks(quickbooks_data: str) -> Set[str]:
-    """Extracts email domains from raw QuickBooks data (simulated)."""
-    # In a real application, this would involve parsing the QuickBooks data.
-    # This is a placeholder for that parsing logic.
-    emails = [line.strip() for line in quickbooks_data.splitlines() if "@" in line]
-    domains = {email.split('@')[1].lower() for email in emails}
-    return domains
-
-def merge_domains(existing_domains: Set[str], new_domains: Set[str]) -> Set[str]:
-    """Merges existing and new email domains, removing duplicates."""
-    all_domains = existing_domains.union(new_domains)
-    return all_domains
-
-def save_merged_domains_to_csv(all_domains: Set[str], filename: str = './data/Unique_Email_Domains.csv'):
-    """Saves the merged email domains to a CSV file."""
-    try:
-        with open(filename, 'w', newline='') as csvfile:
-            writer = csv.writer(csvfile)
-            for domain in sorted(all_domains):  # Sort the domains for better readability
-                writer.writerow([domain])
-        print(f"Successfully saved {len(all_domains)} domains to {filename}")
-    except Exception as e:
-        print(f"An error occurred while saving to {filename}: {e}")
 
 def backup_domain_file(filename: str, backup_filename: str):
-    """Backs up the domain file before updating."""
+    """Backup existing domain file"""
     try:
+        # Create backup directory if it doesn't exist
+        os.makedirs(os.path.dirname(backup_filename), exist_ok=True)
         shutil.copyfile(filename, backup_filename)
-        print(f"Successfully backed up {filename} to {backup_filename}")
+        print_colored(f"Backed up {filename} to {backup_filename}", 'GREEN')
     except FileNotFoundError:
-        print(f"Warning: Could not find {filename} to backup.")
+        print_colored(f"No existing file to backup at {filename}", 'YELLOW')
     except Exception as e:
-        print(f"An error occurred during backup: {e}")
+        print_colored(f"Error creating backup: {e}", 'RED')
 
-def update_domains(quickbooks_data: str = None):
-    """Main function to update email domains from QuickBooks data."""
-    filename = './data/Unique_Email_Domains.csv'
-    backup_filename = './backups/Unique_Email_Domains_backup.csv'
-
-    # Backup existing domain file
-    backup_domain_file(filename, backup_filename)
-
-    # Read existing domains
-    existing_domains = read_existing_domains_from_csv(filename)
-
-    # Extract new domains from QuickBooks (simulated)
-    new_domains = extract_domains_from_quickbooks(quickbooks_data or "")
-
-    # Merge domains
-    all_domains = merge_domains(existing_domains, new_domains)
-
-    # Save merged domains to CSV
-    save_merged_domains_to_csv(all_domains, filename)
-
-if __name__ == '__main__':
-    # Simulate QuickBooks data
-    quickbooks_data = """
-    john.doe@example.com
-    jane.smith@test.com
-    support@newdomain.net
-    """
-    update_domains(quickbooks_data)
-```
-
-```python
-# modules/spam_detector.py
-import csv
-
-class SpamDetector:
-    def __init__(self, leads_file, whitelist_file, not_spam_output, spam_output):
-        self.leads_file = leads_file
-        self.whitelist_file = whitelist_file
-        self.not_spam_output = not_spam_output
-        self.spam_output = spam_output
-        self.whitelisted_domains = self.load_whitelist()
-
-    def load_whitelist(self):
-        whitelisted_domains = set()
-        with open(self.whitelist_file, 'r') as f:
-            reader = csv.reader(f)
-            for row in reader:
-                whitelisted_domains.add(row[0].strip().lower())
-        return whitelisted_domains
-
-    def analyze_lead(self, email):
-        domain = email.split('@')[1].lower()
-        return domain in self.whitelisted_domains
-
-    def process_leads(self):
-        not_spam_leads = []
-        spam_leads = []
-
-        with open(self.leads_file, 'r') as f:
-            reader = csv.reader(f)
-            next(reader)  # Skip header
-
-            for row in reader:
-                email = row[0]
-                if self.analyze_lead(email):
-                    not_spam_leads.append(row)
-                else:
-                    spam_leads.append(row)
-
-        self.save_leads(not_spam_leads, self.not_spam_output)
-        self.save_leads(spam_leads, self.spam_output)
-
-    def save_leads(self, leads, output_file):
-        with open(output_file, 'w', newline='') as f:
-            writer = csv.writer(f)
-            #writer.writerow(['Email', 'Other', 'Fields']) #Example header
-            writer.writerows(leads)
+def save_domains_to_csv(domains: Set[str], filename: str):
+    """Save domains to CSV file"""
+    try:
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        
+        with open(filename, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            for domain in sorted(domains):
+                writer.writerow([domain])
+        
+        print_colored(f"Saved {len(domains)} domains to {filename}", 'GREEN')
+    except Exception as e:
+        print_colored(f"Error saving domains to CSV: {e}", 'RED')
 
 def main():
-    leads_file = "./data/leads.csv"
-    whitelist_file = "./data/Unique_Email_Domains.csv"
-    not_spam_output = "./output/not_spam_leads.csv"
-    spam_output = "./output/spam_leads.csv"
-
-    detector = SpamDetector(leads_file, whitelist_file, not_spam_output, spam_output)
-    detector.process_leads()
+    """Main function to update domains from QuickBooks"""
+    print_colored("Starting QuickBooks domain update...", 'BLUE')
+    
+    # Check if API credentials are set
+    if not all([QB_CLIENT_ID, QB_CLIENT_SECRET, QB_COMPANY_ID, QB_REFRESH_TOKEN]):
+        print_colored("Error: QuickBooks API credentials not set in environment variables", 'RED')
+        print("Required environment variables:")
+        print("  - QUICKBOOKS_CLIENT_ID")
+        print("  - QUICKBOOKS_CLIENT_SECRET") 
+        print("  - QUICKBOOKS_COMPANY_ID")
+        print("  - QUICKBOOKS_REFRESH_TOKEN")
+        return 1
+    
+    filename = './data/Unique_Email_Domains.csv'
+    backup_filename = './backups/Unique_Email_Domains_backup.csv'
+    
+    # Backup existing file
+    backup_domain_file(filename, backup_filename)
+    
+    # Read existing domains
+    existing_domains = read_existing_domains_from_csv(filename)
+    
+    # Get customers from QuickBooks
+    customers = get_quickbooks_customers()
+    if not customers:
+        print_colored("No customers retrieved from QuickBooks", 'YELLOW')
+        return 1
+    
+    # Extract new domains
+    new_domains = extract_customer_domains(customers)
+    
+    # Merge domains
+    all_domains = existing_domains | new_domains
+    new_count = len(new_domains - existing_domains)
+    
+    # Save merged domains
+    save_domains_to_csv(all_domains, filename)
+    
+    print_colored(f"\nDomain update complete!", 'GREEN')
+    print(f"Total domains: {len(all_domains)}")
+    print(f"New domains added: {new_count}")
+    
+    if new_count > 0:
+        print("New domains:")
+        for domain in sorted(new_domains - existing_domains):
+            print(f"  + {domain}")
+    
+    return 0
 
 if __name__ == "__main__":
-    main()
-```
-
-```markdown
-# README.md
-# HubSpot Automation v1
-
-## Modules:
-1. Spam Detector - Filters leads based on Freshdesk history
-2. [Placeholder for next script]
-3. [Placeholder for third script]
-
-## Workflow:
-1. Update customer domains from QuickBooks
-2. Run spam detection on leads
-3. Output: not_spam_leads.csv (input for next module)
-```
-
-```python
-# modules/__init__.py
+    exit_code = main()
+    exit(exit_code)

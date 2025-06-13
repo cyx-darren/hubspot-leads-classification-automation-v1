@@ -119,7 +119,10 @@ def run_spam_detection():
     print("-" * 50)
     
     try:
-        # Run the spam detection with updated whitelist
+        # Detect input filename for date parsing
+        input_file = "./data/leads.csv"
+        
+        # Run the spam detection with filename for date detection
         not_spam_count, spam_count = spam_detector.main()
         total_processed = not_spam_count + spam_count
         return not_spam_count, spam_count, total_processed
