@@ -459,6 +459,25 @@ def extract_product_mentions(text: str, product_catalog: List[Dict], is_subject=
                                 print(f"    DEBUG: Skipping non-product fuzzy match: '{match_name}'")
                                 continue
                             
+                            # Category validation to prevent cross-category matches
+                            phrase_lower = phrase.lower()
+                            match_lower = match_name.lower()
+                            
+                            # Don't match stickers to bags
+                            if 'sticker' in phrase_lower and 'bag' in match_lower:
+                                print(f"    DEBUG: Skipping cross-category match: sticker phrase '{phrase}' to bag product '{match_name}'")
+                                continue
+                            
+                            # Don't match cards to non-card products
+                            if 'card' in phrase_lower and 'card' not in match_lower:
+                                print(f"    DEBUG: Skipping cross-category match: card phrase '{phrase}' to non-card product '{match_name}'")
+                                continue
+                            
+                            # Don't match bags to non-bag products when phrase clearly indicates bags
+                            if 'bag' in phrase_lower and 'bag' not in match_lower:
+                                print(f"    DEBUG: Skipping cross-category match: bag phrase '{phrase}' to non-bag product '{match_name}'")
+                                continue
+                            
                             mentioned_products.append(match_name)
                             confidence_scores.append((match_name, score, 'fuzzy'))
                             print(f"    DEBUG: Conservative fuzzy match: '{phrase}' → '{match_name}' (confidence: {score})")
@@ -493,7 +512,7 @@ def extract_product_mentions(text: str, product_catalog: List[Dict], is_subject=
             has_leather = 'leather' in text_lower
             has_keychain = 'keychain' in text_lower
             
-            # Determine which lanyard product to use
+            # Determine which lanyard product to use - ONLY use Leather when leather is mentioned
             if has_leather and has_keychain:
                 lanyard_product = "Leather Lanyards"
             elif has_leather:
@@ -501,15 +520,16 @@ def extract_product_mentions(text: str, product_catalog: List[Dict], is_subject=
             elif has_keychain:
                 lanyard_product = "Lanyard Keychain"
             else:
+                # Default for any other lanyard mention
                 lanyard_product = "Lanyards (With Printing)"
             
             # Check if this product hasn't been added yet
             if lanyard_product not in [prod for prod, _, _ in confidence_scores]:
                 mentioned_products.append(lanyard_product)
                 confidence_scores.append((lanyard_product, 70, 'lanyard_special'))
-                print(f"    DEBUG: Special lanyard match: 'lanyard' → '{lanyard_product}' (confidence: 70)")
+                print(f"    DEBUG: Special lanyard match: 'lanyard'{' + leather' if has_leather else ''}{' + keychain' if has_keychain else ''} → '{lanyard_product}' (confidence: 70)")
         
-        # Handle specific product type mappings
+        # Handle specific product type mappings with category awareness
         product_type_mappings = {
             'tissue pack': [p for p in product_names if 'tissue' in p.lower()],
             'tissue': [p for p in product_names if 'tissue' in p.lower()],
@@ -520,7 +540,15 @@ def extract_product_mentions(text: str, product_catalog: List[Dict], is_subject=
             'wallet': [p for p in product_names if 'wallet' in p.lower()],
             'mug': [p for p in product_names if 'mug' in p.lower()],
             'bottle': [p for p in product_names if 'bottle' in p.lower()],
-            'umbrella': [p for p in product_names if 'umbrella' in p.lower()]
+            'umbrella': [p for p in product_names if 'umbrella' in p.lower()],
+            # New mappings for missing products
+            'cards printing': [p for p in product_names if 'card' in p.lower() and ('business' in p.lower() or 'name' in p.lower())],
+            'business cards': [p for p in product_names if 'card' in p.lower() and 'business' in p.lower()],
+            'name cards': [p for p in product_names if 'card' in p.lower() and 'name' in p.lower()],
+            'stationery printing': [p for p in product_names if any(term in p.lower() for term in ['pen', 'notebook', 'folder'])],
+            'vests': [p for p in product_names if 'vest' in p.lower()],
+            'stickers': [p for p in product_names if 'sticker' in p.lower() and 'bag' not in p.lower()],  # Exclude bags!
+            'paper stickers': [p for p in product_names if 'sticker' in p.lower() and 'bag' not in p.lower()]  # Exclude bags!
         }
         
         for keyword, matching_products in product_type_mappings.items():
