@@ -8,8 +8,8 @@ import shutil
 from typing import List, Set
 from datetime import datetime
 
-# QuickBooks API configuration
-QB_BASE_URL = "https://sandbox-quickbooks.api.intuit.com"  # Change to production: https://quickbooks.api.intuit.com
+# QuickBooks API configuration - PRODUCTION ENVIRONMENT
+QB_BASE_URL = "https://quickbooks.api.intuit.com"  # Production URL
 QB_TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
 
 class QuickBooksAPI:
@@ -19,10 +19,17 @@ class QuickBooksAPI:
         self.company_id = os.environ.get('QUICKBOOKS_COMPANY_ID')
         self.refresh_token = os.environ.get('QUICKBOOKS_REFRESH_TOKEN')
         self.access_token = None
+        self.environment = 'production'  # Explicitly set to production
         
         # Validate required credentials
         if not all([self.client_id, self.client_secret, self.company_id, self.refresh_token]):
             raise ValueError("Missing QuickBooks API credentials in Replit Secrets")
+        
+        # Environment verification
+        print(f"Using QuickBooks Production API")
+        print(f"Company ID: {self.company_id}")
+        print(f"API Base URL: {QB_BASE_URL}")
+        print(f"Environment: {self.environment}")
     
     def get_access_token(self):
         """Get a new access token using the refresh token"""
@@ -41,7 +48,7 @@ class QuickBooksAPI:
             'refresh_token': self.refresh_token
         }
         
-        print("Requesting new access token...")
+        print(f"Requesting new access token for {self.environment} environment...")
         response = requests.post(QB_TOKEN_URL, headers=headers, data=data)
         
         if response.status_code == 200:
@@ -53,6 +60,11 @@ class QuickBooksAPI:
         else:
             print(f"✗ Failed to get access token: {response.status_code}")
             print(f"Response: {response.text}")
+            if response.status_code == 400:
+                print("Token refresh failed. This could mean:")
+                print("1. The refresh token has expired (after 101 days)")
+                print("2. The refresh token was generated for sandbox, not production")
+                print("3. The app credentials don't match the token environment")
             return False
     
     def make_authenticated_request(self, url, params=None):
@@ -89,33 +101,64 @@ class QuickBooksAPI:
         
         print("Fetching customers from QuickBooks...")
         
-        while True:
-            # Build query with pagination
-            query = f"SELECT * FROM Customer STARTPOSITION {start_position} MAXRESULTS {max_results}"
-            params = {'query': query}
-            
-            response = self.make_authenticated_request(url, params)
-            
-            if response.status_code == 200:
-                data = response.json()
-                query_response = data.get('QueryResponse', {})
-                customers = query_response.get('Customer', [])
+        try:
+            while True:
+                # Build query with pagination
+                query = f"SELECT * FROM Customer STARTPOSITION {start_position} MAXRESULTS {max_results}"
+                params = {'query': query}
                 
-                if not customers:
-                    break  # No more customers
+                response = self.make_authenticated_request(url, params)
                 
-                all_customers.extend(customers)
-                print(f"  Fetched {len(customers)} customers (total: {len(all_customers)})")
-                
-                # Check if we got fewer results than requested (end of data)
-                if len(customers) < max_results:
+                if response.status_code == 200:
+                    data = response.json()
+                    query_response = data.get('QueryResponse', {})
+                    customers = query_response.get('Customer', [])
+                    
+                    if not customers:
+                        break  # No more customers
+                    
+                    all_customers.extend(customers)
+                    print(f"  Fetched {len(customers)} customers (total: {len(all_customers)})")
+                    
+                    # Check if we got fewer results than requested (end of data)
+                    if len(customers) < max_results:
+                        break
+                    
+                    start_position += max_results
+                elif response.status_code == 403:
+                    # Handle specific 403 authentication error
+                    response_data = response.json() if response.headers.get('content-type', '').startswith('application/json') else {}
+                    error_code = None
+                    
+                    if 'fault' in response_data and 'error' in response_data['fault']:
+                        for error in response_data['fault']['error']:
+                            if '3100' in error.get('code', ''):
+                                error_code = '3100'
+                                break
+                    
+                    print(f"✗ Authentication failed (403): {response.status_code}")
+                    if error_code == '3100':
+                        print("Authentication failed. Please ensure:")
+                        print("1. Your app is approved for production use")
+                        print("2. The tokens were generated for production environment")
+                        print("3. The app has accounting scope authorized")
+                        print("4. The refresh token is valid and not expired")
+                        print("5. The Company ID matches the production environment")
+                    print(f"Response: {response.text}")
                     break
-                
-                start_position += max_results
-            else:
-                print(f"✗ Failed to fetch customers: {response.status_code}")
-                print(f"Response: {response.text}")
-                break
+                else:
+                    print(f"✗ Failed to fetch customers: {response.status_code}")
+                    print(f"Response: {response.text}")
+                    break
+                    
+        except Exception as e:
+            print(f"✗ Error during customer fetch: {e}")
+            if "403" in str(e) and "3100" in str(e):
+                print("Authentication failed. Please ensure:")
+                print("1. Your app is approved for production use")
+                print("2. The tokens were generated for production environment")
+                print("3. The app has accounting scope authorized")
+                print("4. The refresh token is valid and not expired")
         
         print(f"✓ Total customers fetched: {len(all_customers)}")
         return all_customers
