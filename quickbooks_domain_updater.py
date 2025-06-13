@@ -12,6 +12,33 @@ from datetime import datetime
 QB_BASE_URL = "https://quickbooks.api.intuit.com"  # Production URL
 QB_TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
 
+# Generic email domains to exclude from whitelist
+GENERIC_DOMAINS = {
+    'gmail.com',
+    'qq.com',
+    'hotmail.com',
+    'hotmail.co.uk',
+    'hotmail.sg',
+    'yahoo.com',
+    'yahoo.co.uk',
+    'yahoo.com.sg',
+    'outlook.com',
+    'live.com',
+    'icloud.com',
+    'mail.com',
+    'protonmail.com',
+    'aol.com',
+    'ymail.com',
+    'msn.com',
+    'me.com',
+    'proton.me',
+    'gmx.com',
+    '163.com',
+    '126.com',
+    'cyberlinks7.onmicrosoft.com',
+    'easyprintsg.com'
+}
+
 class QuickBooksAPI:
     def __init__(self):
         self.client_id = os.environ.get('QUICKBOOKS_CLIENT_ID')
@@ -211,9 +238,10 @@ def create_backup(filename: str, backup_filename: str):
         print(f"✗ Error creating backup: {e}")
 
 def extract_domains_from_customers(customers: List[dict]) -> Set[str]:
-    """Extract unique domains from customer email addresses"""
+    """Extract unique domains from customer email addresses, excluding generic domains"""
     domains = set()
     email_count = 0
+    excluded_count = 0
     
     print("Extracting domains from customer emails...")
     
@@ -225,8 +253,13 @@ def extract_domains_from_customers(customers: List[dict]) -> Set[str]:
             if email and '@' in email:
                 domain = email.split('@')[1].lower().strip()
                 if domain and '.' in domain:
-                    domains.add(domain)
-                    email_count += 1
+                    # Skip generic email domains
+                    if domain not in GENERIC_DOMAINS:
+                        domains.add(domain)
+                        email_count += 1
+                    else:
+                        excluded_count += 1
+                        print(f"  Skipping generic domain: {domain}")
         
         # Check for other email fields that might exist
         if 'Email' in customer and customer['Email']:
@@ -234,11 +267,17 @@ def extract_domains_from_customers(customers: List[dict]) -> Set[str]:
             if email and '@' in email:
                 domain = email.split('@')[1].lower().strip()
                 if domain and '.' in domain:
-                    domains.add(domain)
-                    email_count += 1
+                    # Skip generic email domains
+                    if domain not in GENERIC_DOMAINS:
+                        domains.add(domain)
+                        email_count += 1
+                    else:
+                        excluded_count += 1
+                        print(f"  Skipping generic domain: {domain}")
     
-    print(f"✓ Processed {email_count} email addresses")
-    print(f"✓ Found {len(domains)} unique domains from QuickBooks")
+    print(f"✓ Processed {email_count} business email addresses")
+    print(f"✓ Excluded {excluded_count} emails from generic domains")
+    print(f"✓ Found {len(domains)} unique business domains from QuickBooks")
     return domains
 
 def save_merged_domains_to_csv(all_domains: Set[str], filename: str = 'Unique_Email_Domains.csv'):
