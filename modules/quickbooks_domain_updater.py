@@ -157,7 +157,7 @@ def extract_customer_domains(customers):
     return domains
 
 def get_quickbooks_customers():
-    """Fetch customers from QuickBooks API"""
+    """Fetch all customers from QuickBooks API using pagination"""
     access_token = get_access_token()
     if not access_token:
         return []
@@ -168,15 +168,49 @@ def get_quickbooks_customers():
         'Accept': 'application/json'
     }
     
+    all_customers = []
+    start_position = 1
+    max_results = 100
+    
     try:
-        url = f"{base_url}/query?query=SELECT * FROM Customer"
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
+        print_colored("Fetching customers with pagination...", 'BLUE')
         
-        data = response.json()
-        customers = data.get('QueryResponse', {}).get('Customer', [])
-        print_colored(f"Retrieved {len(customers)} customers from QuickBooks", 'GREEN')
-        return customers
+        while True:
+            # Query with pagination
+            query = f"SELECT * FROM Customer MAXRESULTS {max_results} STARTPOSITION {start_position}"
+            url = f"{base_url}/query?query={query}"
+            
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()
+            
+            data = response.json()
+            query_response = data.get('QueryResponse', {})
+            
+            # Get customers from this batch
+            batch_customers = query_response.get('Customer', [])
+            
+            if not batch_customers:
+                # No more customers to fetch
+                break
+            
+            all_customers.extend(batch_customers)
+            
+            print_colored(f"  Retrieved {len(batch_customers)} customers (total so far: {len(all_customers)})", 'BLUE')
+            
+            # Progress indicator for large datasets
+            if len(all_customers) % 500 == 0:
+                print_colored(f"  Progress: {len(all_customers)} customers fetched...", 'YELLOW')
+            
+            # Check if there are more results
+            if len(batch_customers) < max_results:
+                # Last batch was smaller than max_results, so we're done
+                break
+            
+            # Move to next page
+            start_position += max_results
+        
+        print_colored(f"Total customers retrieved: {len(all_customers)}", 'GREEN')
+        return all_customers
         
     except Exception as e:
         print_colored(f"Error fetching customers: {e}", 'RED')
