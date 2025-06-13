@@ -464,48 +464,15 @@ def main():
     else:
         print_colored("Warning: No whitelisted domains found", Colors.YELLOW)
 
-    # Get list of emails to check - from leads.csv by default
-    print("\nHow would you like to provide emails to check?")
-    print("1. Read from leads.csv (default)")
-    print("2. Read from another file")
-    print("3. Enter manually")
-    emails_input_choice = input("Enter your choice (1, 2, or 3) [1]: ").strip() or '1'
-
-    emails_to_check = []
-    if emails_input_choice == '1':
-        email_file = "leads.csv"
-        print(f"Reading emails from {email_file}...")
-        emails_to_check = read_emails_from_file(email_file)
-        if emails_to_check:
-            print_colored(f"Successfully loaded {len(emails_to_check)} emails to check", Colors.GREEN)
-        else:
-            print_colored("No valid emails found in leads.csv. Exiting.", Colors.RED)
-            sys.exit(1)
-    elif emails_input_choice == '2':
-        email_file = input("Enter the path to the email list file: ").strip()
-        emails_to_check = read_emails_from_file(email_file)
-        if emails_to_check:
-            print_colored(f"Successfully loaded {len(emails_to_check)} emails to check", Colors.GREEN)
-        else:
-            print_colored("No valid emails found in the file. Exiting.", Colors.RED)
-            sys.exit(1)
-    elif emails_input_choice == '3':
-        print("Enter emails one per line. Enter a blank line when finished:")
-        while True:
-            email = input().strip()
-            if not email:
-                break
-            if '@' in email:
-                emails_to_check.append(email)
-            else:
-                print_colored(f"Skipping invalid email: {email}", Colors.YELLOW)
-        if emails_to_check:
-            print_colored(f"Successfully entered {len(emails_to_check)} emails to check", Colors.GREEN)
-        else:
-            print_colored("No valid emails entered. Exiting.", Colors.RED)
-            sys.exit(1)
+    # Automatically read from leads.csv
+    email_file = "leads.csv"
+    print(f"Reading emails from {email_file}...")
+    emails_to_check = read_emails_from_file(email_file)
+    
+    if emails_to_check:
+        print_colored(f"Successfully loaded {len(emails_to_check)} emails to check", Colors.GREEN)
     else:
-        print_colored("Invalid choice. Exiting.", Colors.RED)
+        print_colored("No valid emails found in leads.csv. Exiting.", Colors.RED)
         sys.exit(1)
 
     # Process each email
