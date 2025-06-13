@@ -43,26 +43,40 @@ def print_colored(text: str, color: str):
 
 def load_product_catalog(file_path="./data/Product_Catalogue.csv"):
     """Load the product catalog from CSV file"""
+    products = []
     try:
-        df = pd.read_csv(file_path)
-        print_colored(f"✓ Loaded product catalog with {len(df)} products", Colors.GREEN)
+        with open(file_path, 'r', encoding='utf-8') as file:
+            reader = csv.reader(file)
+            
+            # Check if first row looks like a header
+            first_row = next(reader, None)
+            if first_row:
+                # If it contains actual product names (not "Product" or similar header)
+                if first_row[0] and not first_row[0].lower() in ['product', 'products', 'product name']:
+                    # First row is a product, not a header
+                    product_name = first_row[0].strip()
+                    category = first_row[1].strip() if len(first_row) > 1 else 'General'
+                    products.append({'name': product_name, 'category': category})
+                
+                # Read remaining rows
+                for row in reader:
+                    if row and row[0].strip():  # If row exists and first column is not empty
+                        product_name = row[0].strip()
+                        category = row[1].strip() if len(row) > 1 else 'General'
+                        products.append({'name': product_name, 'category': category})
         
-        # Debug: Show sample products and columns
-        print(f"DEBUG: Product catalog columns: {list(df.columns)}")
-        if len(df) > 0:
-            print(f"DEBUG: Sample products from catalog:")
-            for i, row in df.head(5).iterrows():
-                product_name = row.get('Product Name', 'N/A')
-                category = row.get('Category', 'N/A')
-                print(f"  - {product_name} (Category: {category})")
-        
-        return df
+        print_colored(f"✓ Loaded product catalog with {len(products)} products", Colors.GREEN)
+        if products:
+            print(f"DEBUG: First 5 products: {[p['name'] for p in products[:5]]}")
+            
     except FileNotFoundError:
         print_colored(f"Error: Product catalog not found at {file_path}", Colors.RED)
-        return pd.DataFrame()
+        return []
     except Exception as e:
-        print_colored(f"Error loading product catalog: {e}", Colors.RED)
-        return pd.DataFrame()
+        print_colored(f"Error reading product catalog: {e}", Colors.RED)
+        return []
+    
+    return products
 
 def get_ticket_conversations(ticket_id: int) -> List[Dict]:
     """Get all conversations for a specific ticket"""
@@ -210,9 +224,9 @@ def get_tickets_for_email_in_period(email: str, start_date: datetime, end_date: 
 
     return all_tickets
 
-def extract_product_mentions(text: str, product_catalog: pd.DataFrame) -> List[str]:
+def extract_product_mentions(text: str, product_catalog: List[Dict]) -> List[str]:
     """Extract product mentions from text using product catalog with flexible matching"""
-    if product_catalog.empty:
+    if not product_catalog:
         print("    DEBUG: Product catalog is empty")
         return []
     
@@ -222,18 +236,17 @@ def extract_product_mentions(text: str, product_catalog: pd.DataFrame) -> List[s
     print(f"    DEBUG: Analyzing text: {text[:100]}...")
     
     # Check for exact and partial product name matches
-    for _, product in product_catalog.iterrows():
-        product_name = str(product.get('Product Name', '')).lower()
-        category = str(product.get('Category', '')).lower()
-        subcategory = str(product.get('Subcategory', '')).lower()
+    for product_dict in product_catalog:
+        product_name = product_dict['name'].lower()
+        category = product_dict.get('category', '').lower()
         
         # Skip empty products
-        if not product_name or product_name == 'nan':
+        if not product_name:
             continue
         
         # Method 1: Exact match
         if product_name in text_lower:
-            mentioned_products.append(product_name.title())
+            mentioned_products.append(product_dict['name'])
             print(f"    DEBUG: Exact match found: '{product_name}'")
             continue
         
@@ -244,7 +257,7 @@ def extract_product_mentions(text: str, product_catalog: pd.DataFrame) -> List[s
             
             # If more than half the significant words match, consider it a match
             if matches >= len(product_words) / 2 and matches > 0:
-                mentioned_products.append(product_name.title())
+                mentioned_products.append(product_dict['name'])
                 print(f"    DEBUG: Partial match found: '{product_name}' (matched {matches}/{len(product_words)} words)")
                 continue
         
@@ -262,11 +275,6 @@ def extract_product_mentions(text: str, product_catalog: pd.DataFrame) -> List[s
         if category and len(category) > 3 and category in text_lower:
             mentioned_products.append(f"Category: {category.title()}")
             print(f"    DEBUG: Category match found: '{category}'")
-        
-        # Check for subcategory mentions
-        if subcategory and len(subcategory) > 3 and subcategory in text_lower:
-            mentioned_products.append(f"Subcategory: {subcategory.title()}")
-            print(f"    DEBUG: Subcategory match found: '{subcategory}'")
     
     # Method 4: Look for common product patterns
     product_patterns = [
@@ -286,7 +294,7 @@ def extract_product_mentions(text: str, product_catalog: pd.DataFrame) -> List[s
     
     return unique_products
 
-def analyze_lead_products(email: str, product_catalog: pd.DataFrame, start_date: datetime, end_date: datetime) -> Dict:
+def analyze_lead_products(email: str, product_catalog: List[Dict], start_date: datetime, end_date: datetime) -> Dict:
     """Analyze a lead's product interests based on Freshdesk tickets"""
     result = {
         'email': email,
