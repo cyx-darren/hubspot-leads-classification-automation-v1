@@ -162,7 +162,7 @@ def get_quickbooks_customers():
     if not access_token:
         return []
     
-    base_url = f"https://sandbox-quickbooks.api.intuit.com/v3/company/{QB_COMPANY_ID}"
+    base_url = f"https://quickbooks.api.intuit.com/v3/company/{QB_COMPANY_ID}"
     headers = {
         'Authorization': f'Bearer {access_token}',
         'Accept': 'application/json'
