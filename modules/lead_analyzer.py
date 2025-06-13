@@ -227,6 +227,11 @@ def get_tickets_for_email_in_period(email: str, start_date: datetime, end_date: 
 
 def extract_product_mentions(text: str, product_catalog: List[Dict], is_subject=False) -> List[str]:
     """Extract product mentions from text with improved filtering and prioritization"""
+    # Add null check at the start
+    if not text:
+        print("    DEBUG: Text is None or empty")
+        return []
+    
     if not product_catalog:
         print("    DEBUG: Product catalog is empty")
         return []
@@ -238,6 +243,7 @@ def extract_product_mentions(text: str, product_catalog: List[Dict], is_subject=
         'free', 'bulk', 'wholesale', 'retail', 'online', 'order', 'request'
     }
     
+    # Safe to process now
     text_lower = text.lower()
     mentioned_products = []
     
@@ -351,8 +357,8 @@ def analyze_lead_products(email: str, product_catalog: List[Dict], start_date: d
     
     for i, ticket in enumerate(tickets):
         ticket_id = ticket.get('id')
-        subject = ticket.get('subject', '')
-        description = ticket.get('description_text', '')
+        subject = ticket.get('subject') or ''
+        description = ticket.get('description_text') or ''
         
         print(f"    DEBUG: Analyzing ticket {i+1}/{len(tickets)} - ID: {ticket_id}")
         print(f"    DEBUG: Subject: {subject}")
@@ -362,7 +368,9 @@ def analyze_lead_products(email: str, product_catalog: List[Dict], start_date: d
         if 'custom_fields' in ticket:
             print(f"    DEBUG: Custom fields: {ticket['custom_fields']}")
         
-        result['ticket_subjects'].append(subject)
+        # Only add subject if not empty
+        if subject:
+            result['ticket_subjects'].append(subject)
         
         # Extract products from ticket subject (highest priority)
         print(f"    DEBUG: Extracting products from subject...")
@@ -385,14 +393,21 @@ def analyze_lead_products(email: str, product_catalog: List[Dict], start_date: d
         # Only analyze first few conversations to avoid noise
         for j, conv in enumerate(conversations[:3]):  # Limit to first 3 conversations
             if isinstance(conv, dict):
-                body_text = conv.get('body_text', '')
+                # Get body text with null safety
+                body_text = conv.get('body_text') or conv.get('body') or ''
                 user_id = conv.get('user_id')
-                from_email = conv.get('from_email', '').lower()
+                from_email_raw = conv.get('from_email', '')
+                from_email = from_email_raw.lower() if from_email_raw else ''
+                
+                # Skip if body is None or empty
+                if not body_text:
+                    print(f"      DEBUG: Empty conversation {j+1}")
+                    continue
                 
                 # Focus on customer messages (not internal staff responses)
                 is_customer_message = (from_email and email.lower() in from_email) or not user_id
                 
-                if body_text and is_customer_message:
+                if is_customer_message:
                     print(f"      DEBUG: Analyzing customer conversation {j+1}: {body_text[:50]}...")
                     # Store snippet for analysis
                     snippet = body_text[:200] + "..." if len(body_text) > 200 else body_text
@@ -402,10 +417,8 @@ def analyze_lead_products(email: str, product_catalog: List[Dict], start_date: d
                     conv_products = extract_product_mentions(body_text, product_catalog, is_subject=False)
                     print(f"      DEBUG: Found {len(conv_products)} products in customer message")
                     all_product_mentions.extend(conv_products)
-                elif body_text:
-                    print(f"      DEBUG: Skipping staff message {j+1}")
                 else:
-                    print(f"      DEBUG: Empty conversation {j+1}")
+                    print(f"      DEBUG: Skipping staff message {j+1}")
         
         # Small delay to avoid rate limiting
         time.sleep(0.1)
