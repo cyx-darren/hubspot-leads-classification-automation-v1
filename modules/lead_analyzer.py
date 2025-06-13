@@ -71,6 +71,34 @@ def get_ticket_conversations(ticket_id: int) -> List[Dict]:
         print_colored(f"Error getting conversations for ticket {ticket_id}: {e}", Colors.RED)
         return []
 
+def parse_ticket_date(date_str: str) -> datetime:
+    """Parse Freshdesk date string to datetime object."""
+    try:
+        # Freshdesk typically returns dates in ISO format
+        return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+    except:
+        try:
+            # Fallback to other common formats
+            return datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S%z")
+        except:
+            return None
+
+def is_ticket_in_analysis_period(ticket: Dict, start_date: datetime, end_date: datetime) -> bool:
+    """Check if a ticket was created within the specified analysis period."""
+    created_at = ticket.get('created_at')
+    if not created_at:
+        return False
+
+    ticket_date = parse_ticket_date(created_at)
+    if not ticket_date:
+        return False
+
+    # Ensure ticket_date is timezone-aware
+    if ticket_date.tzinfo is None:
+        ticket_date = ticket_date.replace(tzinfo=timezone.utc)
+
+    return start_date <= ticket_date <= end_date
+
 def get_tickets_for_email_in_period(email: str, start_date: datetime, end_date: datetime) -> List[Dict]:
     """Get all tickets for an email within a specific date range"""
     if not FRESHDESK_API_KEY or not FRESHDESK_DOMAIN:
@@ -95,7 +123,9 @@ def get_tickets_for_email_in_period(email: str, start_date: datetime, end_date: 
         if response.status_code == 200:
             tickets = response.json()
             if tickets:
-                return tickets
+                # Filter tickets to ensure they're in date range
+                filtered_tickets = [t for t in tickets if is_ticket_in_analysis_period(t, start_date, end_date)]
+                return filtered_tickets
         
         # Fallback: get all tickets for email and filter
         params = {"query": f"email:'{email}'"}
@@ -103,17 +133,8 @@ def get_tickets_for_email_in_period(email: str, start_date: datetime, end_date: 
         
         if response.status_code == 200:
             all_tickets = response.json()
-            # Filter by date range
-            filtered_tickets = []
-            for ticket in all_tickets:
-                created_at = ticket.get('created_at')
-                if created_at:
-                    try:
-                        ticket_date = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-                        if start_date <= ticket_date <= end_date:
-                            filtered_tickets.append(ticket)
-                    except:
-                        continue
+            # Filter by date range using our date checking function
+            filtered_tickets = [t for t in all_tickets if is_ticket_in_analysis_period(t, start_date, end_date)]
             return filtered_tickets
         
         return []
@@ -209,11 +230,11 @@ def analyze_leads(input_csv_path="./output/not_spam_leads.csv",
                  start_date=None, end_date=None):
     """Main function to analyze leads and their product interests"""
     
-    # Default to February 2025 if no dates provided
+    # Default to March-May 2025 if no dates provided
     if not start_date:
-        start_date = datetime(2025, 2, 1, tzinfo=timezone.utc)
+        start_date = datetime(2025, 3, 1, tzinfo=timezone.utc)
     if not end_date:
-        end_date = datetime(2025, 2, 28, 23, 59, 59, tzinfo=timezone.utc)
+        end_date = datetime(2025, 5, 31, 23, 59, 59, tzinfo=timezone.utc)
     
     print_colored(f"Starting lead analysis for period: {start_date.strftime('%B %d, %Y')} - {end_date.strftime('%B %d, %Y')}", Colors.BLUE)
     

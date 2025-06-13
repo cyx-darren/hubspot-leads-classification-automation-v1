@@ -217,7 +217,7 @@ def run_spam_detection(leads_file):
         print(f"Spam emails detected: {spam_count}")
         print(f"Non-spam emails detected: {not_spam_count}")
         
-        return not_spam_count, spam_count, len(results)
+        return not_spam_count, spam_count, len(results), detector
         
     except KeyboardInterrupt:
         print_colored("\nSpam detection interrupted by user.", "yellow")
@@ -229,7 +229,7 @@ def run_spam_detection(leads_file):
         print_colored(f"Error during spam detection: {e}", "red")
         raise
 
-def run_lead_analysis():
+def run_lead_analysis(start_date=None, end_date=None):
     """Run lead analysis on not_spam leads"""
     print("Step 3: Analyzing lead products and Freshdesk data...")
     print("-" * 50)
@@ -248,12 +248,7 @@ def run_lead_analysis():
         if not os.path.exists(catalog_file):
             print_colored(f"Warning: {catalog_file} not found. Analysis will be limited.", "yellow")
         
-        # Run lead analysis using February 2025 as default period
-        # You can modify these dates or make them configurable
-        from datetime import datetime, timezone
-        start_date = datetime(2025, 2, 1, tzinfo=timezone.utc)
-        end_date = datetime(2025, 2, 28, 23, 59, 59, tzinfo=timezone.utc)
-        
+        # Use the same date range as spam detector, or defaults if not provided
         success = lead_analyzer.analyze_leads(
             input_csv_path="./output/not_spam_leads.csv",
             output_csv_path="./output/leads_with_products.csv",
@@ -371,8 +366,9 @@ def main():
         print("\n" + "=" * 50)
         
         # Step 2: Run spam detection
+        detector = None
         try:
-            not_spam_count, spam_count, total_processed = run_spam_detection(leads_file)
+            not_spam_count, spam_count, total_processed, detector = run_spam_detection(leads_file)
         except KeyboardInterrupt:
             print_colored("\nWorkflow interrupted by user. Exiting.", "yellow")
             sys.exit(0)
@@ -382,10 +378,13 @@ def main():
         
         print("\n" + "=" * 50)
         
-        # Step 3: Run lead analysis
+        # Step 3: Run lead analysis with same date range as spam detector
         analyzed_leads_count = 0
         try:
-            analyzed_leads_count = run_lead_analysis()
+            if detector:
+                analyzed_leads_count = run_lead_analysis(detector.start_date, detector.end_date)
+            else:
+                analyzed_leads_count = run_lead_analysis()
         except KeyboardInterrupt:
             print_colored("\nWorkflow interrupted by user. Exiting.", "yellow")
             sys.exit(0)
