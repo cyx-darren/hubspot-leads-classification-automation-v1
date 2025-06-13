@@ -303,11 +303,12 @@ def extract_product_mentions(text: str, product_catalog: List[Dict], is_subject=
     # Non-products to filter out
     NON_PRODUCTS = ['delivery', 'custom request form', 'shipping', 'quotation', 'invoice', 'payment']
     
-    # Generic terms to filter out
+    # Generic terms to filter out (expanded list)
     GENERIC_TERMS = {
         'custom', 'singapore', 'delivery', 'printing', 'print', 'large', 'small', 
         'corporate', 'premium', 'standard', 'quality', 'design', 'service',
-        'free', 'bulk', 'wholesale', 'retail', 'online', 'order', 'request'
+        'free', 'bulk', 'wholesale', 'retail', 'online', 'order', 'request',
+        'com', 'business', 'www', 'http', 'https', 'email', 'gmail', 'outlook'
     }
     
     # Safe to process now
@@ -329,6 +330,43 @@ def extract_product_mentions(text: str, product_catalog: List[Dict], is_subject=
     # Create list of product names for fuzzy matching
     product_names = [p['name'] for p in product_catalog if p.get('name')]
     
+    # Subject-aware matching: If analyzing subject with specific product type
+    if is_subject:
+        subject_specific_matches = []
+        
+        # Check for bag-specific matching first
+        if 'bag' in text_lower or 'bags' in text_lower:
+            print("    DEBUG: Subject contains 'bag(s)' - searching for bag products first")
+            bag_products = [p for p in product_names if 'bag' in p.lower()]
+            
+            # Look for specific bag type indicators
+            bag_indicators = {
+                'canvas': [p for p in bag_products if 'canvas' in p.lower()],
+                'tote': [p for p in bag_products if 'tote' in p.lower()],
+                'drawstring': [p for p in bag_products if 'drawstring' in p.lower()],
+                'mesh': [p for p in bag_products if 'mesh' in p.lower()],
+                'paper': [p for p in bag_products if 'paper' in p.lower()],
+                'shopping': [p for p in bag_products if 'shopping' in p.lower()]
+            }
+            
+            # Try to find specific bag type first
+            for indicator, matching_bags in bag_indicators.items():
+                if indicator in text_lower and matching_bags:
+                    subject_specific_matches.extend(matching_bags[:1])  # Take best match
+                    confidence_scores.extend([(bag, 95, 'subject_specific') for bag in matching_bags[:1]])
+                    print(f"    DEBUG: Subject-specific bag match: '{indicator}' → {matching_bags[0]} (confidence: 95)")
+                    break
+            
+            # If no specific bag type found, add generic bag match
+            if not subject_specific_matches and bag_products:
+                # Use the most generic bag product
+                generic_bag = next((p for p in bag_products if 'tote' in p.lower()), bag_products[0])
+                subject_specific_matches.append(generic_bag)
+                confidence_scores.append((generic_bag, 90, 'subject_bag_generic'))
+                print(f"    DEBUG: Generic bag match from subject: {generic_bag} (confidence: 90)")
+        
+        mentioned_products.extend(subject_specific_matches)
+    
     # Priority 1: Exact product name matches (highest confidence - 100)
     exact_matches = []
     for product_name in product_names:
@@ -337,44 +375,64 @@ def extract_product_mentions(text: str, product_catalog: List[Dict], is_subject=
             if any(term in product_name.lower() for term in NON_PRODUCTS):
                 print(f"    DEBUG: Skipping non-product: '{product_name}'")
                 continue
-            exact_matches.append(product_name)
-            confidence_scores.append((product_name, 100, 'exact'))
-            print(f"    DEBUG: Exact match found: '{product_name}' (confidence: 100)")
+            if product_name not in [p for p, _, _ in confidence_scores]:
+                exact_matches.append(product_name)
+                confidence_scores.append((product_name, 100, 'exact'))
+                print(f"    DEBUG: Exact match found: '{product_name}' (confidence: 100)")
     
     mentioned_products.extend(exact_matches)
     
-    # Priority 2: Fuzzy matching for typos and variations (75+ confidence)
-    if len(mentioned_products) < 5:  # Only if we don't have too many already
-        # Split text into words and check each potential product mention
-        words = re.findall(r'\b\w+\b', text_lower)
+    # Priority 2: Improved fuzzy matching with stricter criteria
+    if len(mentioned_products) < 3:  # Only if we don't have enough matches
+        # Split text into sentences first to avoid cross-sentence phrases
+        sentences = re.split(r'[.!?]+', text_lower)
         
-        # Look for potential product phrases (1-4 words)
-        for i in range(len(words)):
-            for length in range(1, min(5, len(words) - i + 1)):
-                phrase = ' '.join(words[i:i+length])
+        for sentence in sentences:
+            if not sentence.strip():
+                continue
                 
-                # Skip if too short or is a generic term
-                if len(phrase) < 3 or phrase in GENERIC_TERMS:
-                    continue
-                
-                # Use fuzzy matching to find similar product names
-                fuzzy_matches = process.extractBests(
-                    phrase, 
-                    product_names, 
-                    scorer=fuzz.token_sort_ratio,
-                    score_cutoff=75,
-                    limit=3
-                )
-                
-                for match_name, score in fuzzy_matches:
-                    if match_name not in [p for p, _, _ in confidence_scores]:
-                        # Filter out non-products
-                        if any(term in match_name.lower() for term in NON_PRODUCTS):
-                            print(f"    DEBUG: Skipping non-product fuzzy match: '{match_name}'")
-                            continue
-                        mentioned_products.append(match_name)
-                        confidence_scores.append((match_name, score, 'fuzzy'))
-                        print(f"    DEBUG: Fuzzy match: '{phrase}' → '{match_name}' (confidence: {score})")
+            words = re.findall(r'\b\w+\b', sentence.strip())
+            
+            # Look for potential product phrases with stricter criteria
+            for i in range(len(words)):
+                for length in range(1, min(4, len(words) - i + 1)):
+                    phrase = ' '.join(words[i:i+length])
+                    
+                    # Stricter filtering for phrases
+                    if len(phrase) < 5:  # Increased minimum length
+                        continue
+                    
+                    # Skip if phrase contains only generic terms
+                    phrase_words = phrase.split()
+                    if all(word in GENERIC_TERMS for word in phrase_words):
+                        continue
+                    
+                    # Skip if phrase is mostly generic terms
+                    generic_word_ratio = sum(1 for word in phrase_words if word in GENERIC_TERMS) / len(phrase_words)
+                    if generic_word_ratio > 0.6:
+                        continue
+                    
+                    # For subjects, require higher confidence for short phrases
+                    min_confidence = 85 if is_subject and len(phrase) < 8 else 75
+                    
+                    # Use fuzzy matching to find similar product names
+                    fuzzy_matches = process.extractBests(
+                        phrase, 
+                        product_names, 
+                        scorer=fuzz.token_sort_ratio,
+                        score_cutoff=min_confidence,
+                        limit=2
+                    )
+                    
+                    for match_name, score in fuzzy_matches:
+                        if match_name not in [p for p, _, _ in confidence_scores]:
+                            # Filter out non-products
+                            if any(term in match_name.lower() for term in NON_PRODUCTS):
+                                print(f"    DEBUG: Skipping non-product fuzzy match: '{match_name}'")
+                                continue
+                            mentioned_products.append(match_name)
+                            confidence_scores.append((match_name, score, 'fuzzy'))
+                            print(f"    DEBUG: Fuzzy match: '{phrase}' → '{match_name}' (confidence: {score})")
     
     # Priority 3: Multi-word product partial matches (60+ confidence)
     if len(mentioned_products) < 5:
