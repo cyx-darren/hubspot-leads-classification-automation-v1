@@ -384,17 +384,41 @@ def extract_product_mentions(text: str, product_catalog: List[Dict], is_subject=
                     confidence_scores.append((product_name, confidence, 'partial'))
                     print(f"    DEBUG: Multi-word match: '{product_name}' (matched {matches}/{len(product_words)} words, confidence: {confidence})")
     
-    # Priority 4: Product type indicators (50+ confidence)
+    # Priority 4: Product type indicators with special lanyard logic (50+ confidence)
     if len(mentioned_products) < 3:
         product_indicators = {
             'bag': ['bag', 'bags', 'tote', 'drawstring', 'mesh bag', 'paper bag', 'shopping bag'],
             'adapter': ['adapter', 'adapters', 'travel adapter', 'power adapter'],
             'apparel': ['shirt', 'polo', 't-shirt', 'hoodie', 'jacket', 'vest', 'apron'],
             'drinkware': ['mug', 'bottle', 'tumbler', 'flask', 'cup'],
-            'accessories': ['lanyard', 'keychain', 'umbrella', 'cap', 'hat'],
+            'accessories': ['keychain', 'umbrella', 'cap', 'hat'],  # Removed 'lanyard' for special handling
             'stationery': ['pen', 'notebook', 'folder', 'organizer', 'diary']
         }
         
+        # Special handling for lanyard detection
+        if 'lanyard' in text_lower:
+            has_leather = 'leather' in text_lower
+            has_keychain = 'keychain' in text_lower
+            
+            # Determine which lanyard product to use
+            if has_leather and has_keychain:
+                # If both leather and keychain, prefer leather lanyards (more specific)
+                lanyard_product = "Leather Lanyards"
+            elif has_leather:
+                lanyard_product = "Leather Lanyards"
+            elif has_keychain:
+                lanyard_product = "Lanyard Keychain"
+            else:
+                # Just "lanyard" without leather or keychain
+                lanyard_product = "Lanyards (With Printing)"
+            
+            # Check if this product hasn't been added yet
+            if lanyard_product not in [prod for prod, _, _ in confidence_scores]:
+                mentioned_products.append(lanyard_product)
+                confidence_scores.append((lanyard_product, 60, 'lanyard_special'))
+                print(f"    DEBUG: Special lanyard match: 'lanyard' → '{lanyard_product}' (confidence: 60)")
+        
+        # Handle other product indicators
         for category, keywords in product_indicators.items():
             for keyword in keywords:
                 if keyword in text_lower and keyword not in GENERIC_TERMS:
@@ -550,61 +574,22 @@ def analyze_lead_products(email: str, product_catalog: List[Dict], start_date: d
     return result
 
 def simplify_product_mentions(product_mentions: List[str]) -> List[str]:
-    """Group and simplify product mentions to avoid redundancy"""
+    """Remove duplicates and return specific product names without generic grouping"""
     if not product_mentions:
         return []
     
-    # Remove exact duplicates first
-    unique_mentions = list(set(product_mentions))
+    # Remove exact duplicates while preserving order
+    seen = set()
+    unique_mentions = []
     
-    # Group similar products
-    grouped_products = {}
-    
-    for product in unique_mentions:
+    for product in product_mentions:
         product_lower = product.lower()
-        
-        # Find the base product type
-        base_type = None
-        
-        # Common groupings
-        if any(term in product_lower for term in ['drawstring', 'mesh bag', 'paper bag', 'tote bag']):
-            base_type = 'Bags'
-        elif any(term in product_lower for term in ['adapter', 'travel adapter', 'power adapter']):
-            base_type = 'Adapters'
-        elif any(term in product_lower for term in ['shirt', 'polo', 't-shirt', 'hoodie', 'jacket']):
-            base_type = 'Apparel'
-        elif any(term in product_lower for term in ['mug', 'bottle', 'tumbler', 'cup']):
-            base_type = 'Drinkware'
-        elif any(term in product_lower for term in ['pen', 'notebook', 'folder', 'diary']):
-            base_type = 'Stationery'
-        elif any(term in product_lower for term in ['lanyard', 'keychain', 'umbrella']):
-            base_type = 'Accessories'
-        else:
-            base_type = product  # Keep as-is if no grouping applies
-        
-        if base_type not in grouped_products:
-            grouped_products[base_type] = []
-        grouped_products[base_type].append(product)
+        if product_lower not in seen:
+            unique_mentions.append(product)
+            seen.add(product_lower)
     
-    # Create simplified list
-    simplified = []
-    for base_type, products in grouped_products.items():
-        if len(products) == 1:
-            simplified.append(products[0])
-        elif len(products) > 1 and base_type in ['Bags', 'Adapters', 'Apparel', 'Drinkware', 'Stationery', 'Accessories']:
-            # Show variety if multiple similar products
-            unique_products = list(set(products))
-            if len(unique_products) > 1:
-                simplified.append(f"{base_type} (Various)")
-            else:
-                simplified.append(unique_products[0])
-        else:
-            # Keep the most specific product name
-            best_product = min(products, key=len)  # Shortest = most specific
-            simplified.append(best_product)
-    
-    # Sort and limit to top 5 most relevant
-    return sorted(simplified)[:5]
+    # Sort alphabetically for consistent output and limit to top 7 most relevant
+    return sorted(unique_mentions)[:7]
 
 def analyze_leads(input_csv_path="./output/not_spam_leads.csv", 
                  output_csv_path="./output/leads_with_products.csv",
