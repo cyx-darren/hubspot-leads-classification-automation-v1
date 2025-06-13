@@ -81,13 +81,13 @@ def check_required_files(leads_file):
 def ask_user_continue():
     """Ask user if they want to continue with existing whitelist"""
     while True:
-        response = input("Continue with existing whitelist? (y/n): ").strip().lower()
-        if response in ['y', 'yes']:
+        response = input("Continue with existing whitelist? (Y/n): ").strip().lower()
+        if response in ['y', 'yes', '']:  # Default to yes if user just presses Enter
             return True
         elif response in ['n', 'no']:
             return False
         else:
-            print("Please enter 'y' for yes or 'n' for no.")
+            print("Please enter 'y' for yes or 'n' for no (default: yes).")
 
 def update_domains_with_error_handling():
     """Update domains from QuickBooks with comprehensive error handling"""
@@ -101,10 +101,12 @@ def update_domains_with_error_handling():
         if exit_code != 0:
             print_colored("\nWarning: QuickBooks domain update failed!", "yellow")
             print("This could be due to:")
+            print("  - Expired refresh token (most common - expires after ~100 days)")
             print("  - API authentication issues")
             print("  - Network connectivity problems")
             print("  - QuickBooks API rate limiting")
             print("  - Invalid credentials in Replit Secrets")
+            print("\nTip: Use --skip-quickbooks flag to skip this step next time:")
             
             if not ask_user_continue():
                 print_colored("Exiting as requested by user.", "yellow")

@@ -60,22 +60,48 @@ def get_access_token():
     """Get access token using refresh token"""
     token_url = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
     
-    headers = {
-        'Authorization': f'Basic {QB_CLIENT_ID}:{QB_CLIENT_SECRET}',
-        'Content-Type': 'application/x-www-form-urlencoded'
-    }
-    
-    data = {
-        'grant_type': 'refresh_token',
-        'refresh_token': QB_REFRESH_TOKEN
-    }
-    
     try:
-        response = requests.post(token_url, headers=headers, data=data)
+        # Add debug info (safely showing only first 20 chars)
+        print(f"Using refresh token: {QB_REFRESH_TOKEN[:20] if QB_REFRESH_TOKEN else 'None'}...")
+        print(f"Client ID: {QB_CLIENT_ID[:20] if QB_CLIENT_ID else 'None'}...")
+        
+        response = requests.post(
+            token_url,
+            headers={
+                'Accept': 'application/json',
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            data={
+                'grant_type': 'refresh_token',
+                'refresh_token': QB_REFRESH_TOKEN,
+                'client_id': QB_CLIENT_ID,
+                'client_secret': QB_CLIENT_SECRET
+            }
+        )
+        
+        print(f"Token response status: {response.status_code}")
+        if response.status_code != 200:
+            print(f"Token error response: {response.text}")
+        
+        # Check for specific error conditions
+        if response.status_code == 401:
+            error_text = response.text.lower()
+            if "invalid_grant" in error_text or "unauthorized" in error_text:
+                print_colored("\n⚠️  Refresh token appears to be expired or invalid!", 'YELLOW')
+                print("To fix this:")
+                print("1. Go to https://developer.intuit.com/app/developer/playground")
+                print("2. Sign in and reauthorize your app")
+                print("3. Copy the new Refresh Token")
+                print("4. Update QUICKBOOKS_REFRESH_TOKEN in Replit Secrets")
+                print("5. Also update QUICKBOOKS_COMPANY_ID if it changed")
+                return None
+        
         response.raise_for_status()
-        return response.json().get('access_token')
+        token_data = response.json()
+        return token_data.get('access_token')
+        
     except Exception as e:
-        print_colored(f"Error getting access token: {e}", 'RED')
+        print_colored(f"Token refresh error details: {str(e)}", 'RED')
         return None
 
 def extract_main_domain(domain):
@@ -204,15 +230,22 @@ def main():
     """Main function to update domains from QuickBooks"""
     print_colored("Starting QuickBooks domain update...", 'BLUE')
     
-    # Check if API credentials are set
+    # Check if API credentials are set with detailed status
+    print("Checking QuickBooks credentials...")
     if not all([QB_CLIENT_ID, QB_CLIENT_SECRET, QB_COMPANY_ID, QB_REFRESH_TOKEN]):
-        print_colored("Error: QuickBooks API credentials not set in environment variables", 'RED')
-        print("Required environment variables:")
+        print_colored("❌ Missing QuickBooks credentials in Replit Secrets", 'RED')
+        print(f"  CLIENT_ID: {'✓' if QB_CLIENT_ID else '✗'}")
+        print(f"  CLIENT_SECRET: {'✓' if QB_CLIENT_SECRET else '✗'}")
+        print(f"  REFRESH_TOKEN: {'✓' if QB_REFRESH_TOKEN else '✗'}")
+        print(f"  COMPANY_ID: {'✓' if QB_COMPANY_ID else '✗'}")
+        print("\nRequired environment variables:")
         print("  - QUICKBOOKS_CLIENT_ID")
         print("  - QUICKBOOKS_CLIENT_SECRET") 
         print("  - QUICKBOOKS_COMPANY_ID")
         print("  - QUICKBOOKS_REFRESH_TOKEN")
         return 1
+    else:
+        print_colored("✓ All QuickBooks credentials found in Replit Secrets", 'GREEN')
     
     filename = './data/Unique_Email_Domains.csv'
     backup_filename = './backups/Unique_Email_Domains_backup.csv'
