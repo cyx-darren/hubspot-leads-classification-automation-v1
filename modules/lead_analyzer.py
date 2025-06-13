@@ -52,17 +52,18 @@ def load_product_catalog(file_path="./data/Product_Catalogue.csv"):
             first_row = next(reader, None)
             if first_row:
                 # If it contains actual product names (not "Product" or similar header)
-                if first_row[0] and not first_row[0].lower() in ['product', 'products', 'product name']:
+                first_col = first_row[0].strip().lstrip('\ufeff') if first_row[0] else ""  # Handle BOM
+                if first_col and not first_col.lower() in ['product', 'products', 'product name']:
                     # First row is a product, not a header
-                    product_name = first_row[0].strip()
-                    category = first_row[1].strip() if len(first_row) > 1 else 'General'
+                    product_name = first_col
+                    category = first_row[1].strip().lstrip('\ufeff') if len(first_row) > 1 else 'General'
                     products.append({'name': product_name, 'category': category})
                 
                 # Read remaining rows
                 for row in reader:
                     if row and row[0].strip():  # If row exists and first column is not empty
-                        product_name = row[0].strip()
-                        category = row[1].strip() if len(row) > 1 else 'General'
+                        product_name = row[0].strip().lstrip('\ufeff')  # Handle BOM
+                        category = row[1].strip().lstrip('\ufeff') if len(row) > 1 else 'General'
                         products.append({'name': product_name, 'category': category})
         
         print_colored(f"✓ Loaded product catalog with {len(products)} products", Colors.GREEN)
@@ -405,7 +406,7 @@ def analyze_leads(input_csv_path="./output/not_spam_leads.csv",
     
     # Load product catalog
     product_catalog = load_product_catalog()
-    if product_catalog.empty:
+    if not product_catalog:
         print_colored("Warning: No product catalog loaded. Product analysis will be limited.", Colors.YELLOW)
     
     # Ensure output directory exists
