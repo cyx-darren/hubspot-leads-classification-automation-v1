@@ -300,19 +300,27 @@ def extract_product_mentions(text: str, product_catalog: List[Dict], is_subject=
         print("    DEBUG: Product catalog is empty")
         return []
     
+    # Early context filtering - skip obvious non-product contexts
+    text_lower = text.lower()
+    
+    # Skip automated/system messages
+    if any(phrase in text_lower for phrase in [
+        'automatic reply:', 'folder shared with you', 'invoice', 'payment', 
+        'receipt', 'billing', 'account statement', 'delivery confirmation'
+    ]):
+        print("    DEBUG: Skipping non-product context (automated/system message)")
+        return []
+    
     # Non-products to filter out
     NON_PRODUCTS = ['delivery', 'custom request form', 'shipping', 'quotation', 'invoice', 'payment']
     
-    # Generic terms to filter out (expanded list)
-    GENERIC_TERMS = {
-        'custom', 'singapore', 'delivery', 'printing', 'print', 'large', 'small', 
-        'corporate', 'premium', 'standard', 'quality', 'design', 'service',
-        'free', 'bulk', 'wholesale', 'retail', 'online', 'order', 'request',
-        'com', 'business', 'www', 'http', 'https', 'email', 'gmail', 'outlook'
+    # Expanded list of words to exclude from fuzzy matching
+    SKIP_WORDS = {
+        'com', 'business', 'www', 'http', 'https', 'email', 'gmail', 'outlook',
+        'automatic', 'reply', 'invoice', 'payment', 'folder', 'shared', 'file',
+        'singapore', 'delivery', 'shipping', 'custom', 'request', 'form'
     }
     
-    # Safe to process now
-    text_lower = text.lower()
     mentioned_products = []
     confidence_scores = []  # Track confidence for sorting
     
@@ -335,8 +343,8 @@ def extract_product_mentions(text: str, product_catalog: List[Dict], is_subject=
         subject_specific_matches = []
         
         # Check for bag-specific matching first
-        if 'bag' in text_lower or 'bags' in text_lower:
-            print("    DEBUG: Subject contains 'bag(s)' - searching for bag products first")
+        if any(term in text_lower for term in ['bag', 'bags', 'printing of bags']):
+            print("    DEBUG: Subject contains bag reference - searching for bag products first")
             bag_products = [p for p in product_names if 'bag' in p.lower()]
             
             # Look for specific bag type indicators
@@ -357,13 +365,31 @@ def extract_product_mentions(text: str, product_catalog: List[Dict], is_subject=
                     print(f"    DEBUG: Subject-specific bag match: '{indicator}' → {matching_bags[0]} (confidence: 95)")
                     break
             
-            # If no specific bag type found, add generic bag match
+            # If no specific bag type found but "bags" mentioned, add generic bag match
             if not subject_specific_matches and bag_products:
-                # Use the most generic bag product
+                # Use the most common bag product
                 generic_bag = next((p for p in bag_products if 'tote' in p.lower()), bag_products[0])
                 subject_specific_matches.append(generic_bag)
                 confidence_scores.append((generic_bag, 90, 'subject_bag_generic'))
                 print(f"    DEBUG: Generic bag match from subject: {generic_bag} (confidence: 90)")
+        
+        # Add specific product type mappings for subjects
+        subject_mappings = {
+            'pin badges': [p for p in product_names if 'badge' in p.lower() or 'pin' in p.lower()],
+            'badges': [p for p in product_names if 'badge' in p.lower()],
+            'tissue pack': [p for p in product_names if 'tissue' in p.lower()],
+            'socks': [p for p in product_names if 'sock' in p.lower()],
+            'wallet': [p for p in product_names if 'wallet' in p.lower()]
+        }
+        
+        for keyword, matching_products in subject_mappings.items():
+            if keyword in text_lower and matching_products:
+                best_match = matching_products[0]  # Take first match
+                if best_match not in [p for p, _, _ in confidence_scores]:
+                    subject_specific_matches.append(best_match)
+                    confidence_scores.append((best_match, 90, 'subject_mapping'))
+                    print(f"    DEBUG: Subject mapping: '{keyword}' → '{best_match}' (confidence: 90)")
+                    break
         
         mentioned_products.extend(subject_specific_matches)
     
@@ -382,38 +408,30 @@ def extract_product_mentions(text: str, product_catalog: List[Dict], is_subject=
     
     mentioned_products.extend(exact_matches)
     
-    # Priority 2: Improved fuzzy matching with stricter criteria
-    if len(mentioned_products) < 3:  # Only if we don't have enough matches
-        # Split text into sentences first to avoid cross-sentence phrases
-        sentences = re.split(r'[.!?]+', text_lower)
+    # Priority 2: Conservative fuzzy matching with much stricter criteria
+    if len(mentioned_products) < 2:  # Only if we have very few matches
+        # Split text into sentences to avoid cross-sentence matching
+        sentences = [s.strip() for s in re.split(r'[.!?]+', text_lower) if s.strip()]
         
         for sentence in sentences:
-            if not sentence.strip():
-                continue
-                
-            words = re.findall(r'\b\w+\b', sentence.strip())
+            words = [w for w in re.findall(r'\b\w+\b', sentence) if w not in SKIP_WORDS]
             
-            # Look for potential product phrases with stricter criteria
+            # Only create consecutive word phrases within same sentence
             for i in range(len(words)):
-                for length in range(1, min(4, len(words) - i + 1)):
+                for length in range(2, min(5, len(words) - i + 1)):  # 2-4 word phrases only
                     phrase = ' '.join(words[i:i+length])
                     
-                    # Stricter filtering for phrases
-                    if len(phrase) < 5:  # Increased minimum length
+                    # Much stricter filtering
+                    if len(phrase) < 6:  # Minimum 6 characters
                         continue
                     
-                    # Skip if phrase contains only generic terms
+                    # Skip if phrase is mostly common words
                     phrase_words = phrase.split()
-                    if all(word in GENERIC_TERMS for word in phrase_words):
+                    if len(phrase_words) < 2:  # Need at least 2 words
                         continue
                     
-                    # Skip if phrase is mostly generic terms
-                    generic_word_ratio = sum(1 for word in phrase_words if word in GENERIC_TERMS) / len(phrase_words)
-                    if generic_word_ratio > 0.6:
-                        continue
-                    
-                    # For subjects, require higher confidence for short phrases
-                    min_confidence = 85 if is_subject and len(phrase) < 8 else 75
+                    # Use higher confidence threshold
+                    min_confidence = 85  # Increased from 75
                     
                     # Use fuzzy matching to find similar product names
                     fuzzy_matches = process.extractBests(
@@ -421,33 +439,44 @@ def extract_product_mentions(text: str, product_catalog: List[Dict], is_subject=
                         product_names, 
                         scorer=fuzz.token_sort_ratio,
                         score_cutoff=min_confidence,
-                        limit=2
+                        limit=1  # Only take best match
                     )
                     
                     for match_name, score in fuzzy_matches:
                         if match_name not in [p for p, _, _ in confidence_scores]:
+                            # Additional validation - phrase should share meaningful words with product
+                            product_words = set(match_name.lower().split())
+                            phrase_words_set = set(phrase.split())
+                            common_words = product_words.intersection(phrase_words_set)
+                            
+                            # Require at least one meaningful common word
+                            if not common_words or all(len(word) < 4 for word in common_words):
+                                print(f"    DEBUG: Skipping fuzzy match with no meaningful overlap: '{phrase}' → '{match_name}'")
+                                continue
+                            
                             # Filter out non-products
                             if any(term in match_name.lower() for term in NON_PRODUCTS):
                                 print(f"    DEBUG: Skipping non-product fuzzy match: '{match_name}'")
                                 continue
+                            
                             mentioned_products.append(match_name)
                             confidence_scores.append((match_name, score, 'fuzzy'))
-                            print(f"    DEBUG: Fuzzy match: '{phrase}' → '{match_name}' (confidence: {score})")
+                            print(f"    DEBUG: Conservative fuzzy match: '{phrase}' → '{match_name}' (confidence: {score})")
     
-    # Priority 3: Multi-word product partial matches (60+ confidence)
-    if len(mentioned_products) < 5:
+    # Priority 3: Multi-word product partial matches (70+ confidence)
+    if len(mentioned_products) < 3:
         for product_name in product_names:
             if product_name in [p for p, _, _ in confidence_scores]:
                 continue
             
             product_words = [word for word in product_name.lower().split() 
-                           if len(word) > 3 and word not in GENERIC_TERMS]
+                           if len(word) > 3 and word not in SKIP_WORDS]
             
             if len(product_words) >= 2:  # Only for multi-word products
                 matches = sum(1 for word in product_words if word in text_lower)
                 
                 # Need at least 2 meaningful words to match
-                if matches >= 2 and matches >= len(product_words) * 0.6:
+                if matches >= 2 and matches >= len(product_words) * 0.7:  # Increased threshold
                     # Filter out non-products
                     if any(term in product_name.lower() for term in NON_PRODUCTS):
                         print(f"    DEBUG: Skipping non-product partial match: '{product_name}'")
@@ -457,68 +486,8 @@ def extract_product_mentions(text: str, product_catalog: List[Dict], is_subject=
                     confidence_scores.append((product_name, confidence, 'partial'))
                     print(f"    DEBUG: Multi-word match: '{product_name}' (matched {matches}/{len(product_words)} words, confidence: {confidence})")
     
-    # Priority 4: Product type indicators with special handling (50+ confidence)
+    # Priority 4: Product type indicators with special handling
     if len(mentioned_products) < 3:
-        # Special handling for bag detection
-        if any(bag_term in text_lower for bag_term in ['bag', 'bags', 'tote', 'drawstring', 'mesh bag', 'paper bag', 'shopping bag']):
-            # Get all bag products from catalog
-            bag_products = [p for p in product_names if 'bag' in p.lower()]
-            
-            if bag_products:
-                best_bag_match = None
-                best_confidence = 0
-                
-                # Context-specific bag matching
-                if 'canvas' in text_lower:
-                    canvas_bags = [p for p in bag_products if 'canvas' in p.lower()]
-                    if canvas_bags:
-                        best_bag_match = canvas_bags[0]  # Take first canvas bag match
-                        best_confidence = 70
-                        print(f"    DEBUG: Canvas bag context match: '{best_bag_match}' (confidence: {best_confidence})")
-                
-                elif 'drawstring' in text_lower:
-                    drawstring_bags = [p for p in bag_products if 'drawstring' in p.lower()]
-                    if drawstring_bags:
-                        best_bag_match = drawstring_bags[0]  # Take first drawstring bag match
-                        best_confidence = 70
-                        print(f"    DEBUG: Drawstring bag context match: '{best_bag_match}' (confidence: {best_confidence})")
-                
-                elif 'tote' in text_lower:
-                    tote_bags = [p for p in bag_products if 'tote' in p.lower()]
-                    if tote_bags:
-                        best_bag_match = tote_bags[0]  # Take first tote bag match
-                        best_confidence = 70
-                        print(f"    DEBUG: Tote bag context match: '{best_bag_match}' (confidence: {best_confidence})")
-                
-                else:
-                    # Use fuzzy matching to find the most relevant bag
-                    bag_phrase = 'bag'
-                    for word in text_lower.split():
-                        if 'bag' in word:
-                            bag_phrase = word
-                            break
-                    
-                    fuzzy_bag_matches = process.extractBests(
-                        bag_phrase,
-                        bag_products,
-                        scorer=fuzz.token_sort_ratio,
-                        score_cutoff=60,
-                        limit=1
-                    )
-                    
-                    if fuzzy_bag_matches:
-                        best_bag_match, best_confidence = fuzzy_bag_matches[0]
-                        print(f"    DEBUG: Fuzzy bag match: '{bag_phrase}' → '{best_bag_match}' (confidence: {best_confidence})")
-                
-                # Add the best bag match if found and not already added
-                if best_bag_match and best_bag_match not in [prod for prod, _, _ in confidence_scores]:
-                    # Filter out non-products
-                    if any(term in best_bag_match.lower() for term in NON_PRODUCTS):
-                        print(f"    DEBUG: Skipping non-product bag match: '{best_bag_match}'")
-                    else:
-                        mentioned_products.append(best_bag_match)
-                        confidence_scores.append((best_bag_match, best_confidence, 'bag_specific'))
-        
         # Special handling for lanyard detection
         if 'lanyard' in text_lower:
             has_leather = 'leather' in text_lower
@@ -526,50 +495,46 @@ def extract_product_mentions(text: str, product_catalog: List[Dict], is_subject=
             
             # Determine which lanyard product to use
             if has_leather and has_keychain:
-                # If both leather and keychain, prefer leather lanyards (more specific)
                 lanyard_product = "Leather Lanyards"
             elif has_leather:
                 lanyard_product = "Leather Lanyards"
             elif has_keychain:
                 lanyard_product = "Lanyard Keychain"
             else:
-                # Just "lanyard" without leather or keychain
                 lanyard_product = "Lanyards (With Printing)"
             
             # Check if this product hasn't been added yet
             if lanyard_product not in [prod for prod, _, _ in confidence_scores]:
                 mentioned_products.append(lanyard_product)
-                confidence_scores.append((lanyard_product, 60, 'lanyard_special'))
-                print(f"    DEBUG: Special lanyard match: 'lanyard' → '{lanyard_product}' (confidence: 60)")
+                confidence_scores.append((lanyard_product, 70, 'lanyard_special'))
+                print(f"    DEBUG: Special lanyard match: 'lanyard' → '{lanyard_product}' (confidence: 70)")
         
-        # Handle other product indicators (non-bag)
-        product_indicators = {
-            'adapter': ['adapter', 'adapters', 'travel adapter', 'power adapter'],
-            'apparel': ['shirt', 'polo', 't-shirt', 'hoodie', 'jacket', 'vest', 'apron'],
-            'drinkware': ['mug', 'bottle', 'tumbler', 'flask', 'cup'],
-            'accessories': ['keychain', 'umbrella', 'cap', 'hat'],
-            'stationery': ['pen', 'notebook', 'folder', 'organizer', 'diary']
+        # Handle specific product type mappings
+        product_type_mappings = {
+            'tissue pack': [p for p in product_names if 'tissue' in p.lower()],
+            'tissue': [p for p in product_names if 'tissue' in p.lower()],
+            'badge': [p for p in product_names if 'badge' in p.lower()],
+            'badges': [p for p in product_names if 'badge' in p.lower()],
+            'pin badge': [p for p in product_names if 'badge' in p.lower() or 'pin' in p.lower()],
+            'socks': [p for p in product_names if 'sock' in p.lower()],
+            'wallet': [p for p in product_names if 'wallet' in p.lower()],
+            'mug': [p for p in product_names if 'mug' in p.lower()],
+            'bottle': [p for p in product_names if 'bottle' in p.lower()],
+            'umbrella': [p for p in product_names if 'umbrella' in p.lower()]
         }
         
-        for category, keywords in product_indicators.items():
-            for keyword in keywords:
-                if keyword in text_lower and keyword not in GENERIC_TERMS:
-                    # Check if this maps to an actual product in catalog
-                    matching_products = [p for p in product_names 
-                                       if keyword.lower() in p.lower() 
-                                       and p not in [prod for prod, _, _ in confidence_scores]]
-                    
-                    if matching_products:
-                        # Add the most specific match
-                        best_match = min(matching_products, key=len)
-                        # Filter out non-products
-                        if any(term in best_match.lower() for term in NON_PRODUCTS):
-                            print(f"    DEBUG: Skipping non-product indicator match: '{best_match}'")
-                            continue
-                        mentioned_products.append(best_match)
-                        confidence_scores.append((best_match, 50, 'indicator'))
-                        print(f"    DEBUG: Product type match: '{keyword}' → '{best_match}' (confidence: 50)")
-                        break
+        for keyword, matching_products in product_type_mappings.items():
+            if keyword in text_lower and matching_products:
+                best_match = matching_products[0]  # Take first match
+                if best_match not in [prod for prod, _, _ in confidence_scores]:
+                    # Filter out non-products
+                    if any(term in best_match.lower() for term in NON_PRODUCTS):
+                        print(f"    DEBUG: Skipping non-product type match: '{best_match}'")
+                        continue
+                    mentioned_products.append(best_match)
+                    confidence_scores.append((best_match, 60, 'type_mapping'))
+                    print(f"    DEBUG: Product type mapping: '{keyword}' → '{best_match}' (confidence: 60)")
+                    break
     
     # Sort by confidence (highest first)
     if confidence_scores:
@@ -585,9 +550,9 @@ def extract_product_mentions(text: str, product_catalog: List[Dict], is_subject=
         
         # Limit results based on context
         if has_buying_intent:
-            max_results = 5 if is_subject else 7  # More results if buying intent
+            max_results = 4 if is_subject else 5  # Reduced to be more conservative
         else:
-            max_results = 3 if is_subject else 5
+            max_results = 2 if is_subject else 3  # Much more conservative
         
         final_products = unique_products[:max_results]
         
