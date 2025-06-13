@@ -1,6 +1,7 @@
 
-import spam_detector
-import quickbooks_domain_updater
+
+from modules import spam_detector
+from modules import quickbooks_domain_updater
 import sys
 import os
 import argparse
@@ -27,18 +28,18 @@ def check_required_files():
     missing_files = []
     
     # Check for leads.csv
-    if not os.path.exists('leads.csv'):
-        missing_files.append('leads.csv')
-        print_colored("✗ leads.csv not found", "red")
+    if not os.path.exists('./data/leads.csv'):
+        missing_files.append('./data/leads.csv')
+        print_colored("✗ ./data/leads.csv not found", "red")
     else:
-        print_colored("✓ leads.csv found", "green")
+        print_colored("✓ ./data/leads.csv found", "green")
     
     # Check for Unique_Email_Domains.csv
-    if not os.path.exists('Unique_Email_Domains.csv'):
-        missing_files.append('Unique_Email_Domains.csv')
-        print_colored("✗ Unique_Email_Domains.csv not found", "red")
+    if not os.path.exists('./data/Unique_Email_Domains.csv'):
+        missing_files.append('./data/Unique_Email_Domains.csv')
+        print_colored("✗ ./data/Unique_Email_Domains.csv not found", "red")
     else:
-        print_colored("✓ Unique_Email_Domains.csv found", "green")
+        print_colored("✓ ./data/Unique_Email_Domains.csv found", "green")
     
     if missing_files:
         print_colored("\nError: Missing required files:", "red")
@@ -46,11 +47,11 @@ def check_required_files():
             print_colored(f"  - {file}", "red")
         
         print("\nRequired files:")
-        print("  - leads.csv: Contains the email addresses to check for spam")
-        print("  - Unique_Email_Domains.csv: Contains whitelisted domains")
+        print("  - ./data/leads.csv: Contains the email addresses to check for spam")
+        print("  - ./data/Unique_Email_Domains.csv: Contains whitelisted domains")
         
-        if 'Unique_Email_Domains.csv' in missing_files:
-            print("\nTo create Unique_Email_Domains.csv:")
+        if './data/Unique_Email_Domains.csv' in missing_files:
+            print("\nTo create ./data/Unique_Email_Domains.csv:")
             print("  1. Run QuickBooks domain updater separately, or")
             print("  2. Create the file manually with domain names (one per line)")
         
@@ -145,8 +146,8 @@ def show_final_summary(not_spam_count, spam_count, total_processed, domains_upda
         print_colored("✓ Spam detection completed (domains not updated)", "yellow")
     
     print(f"📧 Total emails processed: {total_processed}")
-    print_colored(f"✅ Not Spam: {not_spam_count} emails (saved to not_spam_leads.csv)", "green")
-    print_colored(f"🚫 Spam: {spam_count} emails (saved to spam_leads.csv)", "red")
+    print_colored(f"✅ Not Spam: {not_spam_count} emails (saved to ./output/not_spam_leads.csv)", "green")
+    print_colored(f"🚫 Spam: {spam_count} emails (saved to ./output/spam_leads.csv)", "red")
     
     # Calculate percentages
     if total_processed > 0:
@@ -156,15 +157,31 @@ def show_final_summary(not_spam_count, spam_count, total_processed, domains_upda
     
     print("\n" + "=" * 50)
     print_colored("🎉 Spam detection workflow complete!", "green")
+    
+    # Placeholder for future modules
+    print_colored("\n📋 Next Steps (Future Modules):", "blue")
+    print("  Module 2: [Placeholder for next automation script]")
+    print("  Module 3: [Placeholder for third automation script]")
+    print(f"  Input for next module: ./output/not_spam_leads.csv ({not_spam_count} emails)")
+
+# Future module selection menu (commented out for now)
+# def show_module_menu():
+#     """Show menu for selecting automation modules"""
+#     print("\n=== HubSpot Automation v1 - Module Selection ===")
+#     print("1. Spam Detector (Complete)")
+#     print("2. [Module 2 - Coming Soon]")
+#     print("3. [Module 3 - Coming Soon]")
+#     print("4. Run All Modules")
+#     return input("Select module (1-4): ").strip()
 
 def main():
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Complete Spam Detection Workflow')
+    parser = argparse.ArgumentParser(description='HubSpot Automation v1 - Complete Workflow')
     parser.add_argument('--skip-quickbooks', action='store_true', 
                        help='Skip QuickBooks domain update and run spam detection only')
     args = parser.parse_args()
     
-    print_colored("=== Complete Spam Detection Workflow ===\n", "bold")
+    print_colored("=== HubSpot Automation v1 - Complete Workflow ===\n", "bold")
     
     try:
         # Check for required files first
@@ -179,7 +196,7 @@ def main():
         # Step 1: Update domains (unless skipped)
         if args.skip_quickbooks:
             print_colored("Skipping QuickBooks domain update (--skip-quickbooks flag used)", "yellow")
-            print("Using existing Unique_Email_Domains.csv")
+            print("Using existing ./data/Unique_Email_Domains.csv")
             domains_updated = False
         else:
             if not update_domains_with_error_handling():
