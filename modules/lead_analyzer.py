@@ -225,75 +225,103 @@ def get_tickets_for_email_in_period(email: str, start_date: datetime, end_date: 
 
     return all_tickets
 
-def extract_product_mentions(text: str, product_catalog: List[Dict]) -> List[str]:
-    """Extract product mentions from text using product catalog with flexible matching"""
+def extract_product_mentions(text: str, product_catalog: List[Dict], is_subject=False) -> List[str]:
+    """Extract product mentions from text with improved filtering and prioritization"""
     if not product_catalog:
         print("    DEBUG: Product catalog is empty")
         return []
     
+    # Generic terms to filter out
+    GENERIC_TERMS = {
+        'custom', 'singapore', 'delivery', 'printing', 'print', 'large', 'small', 
+        'corporate', 'premium', 'standard', 'quality', 'design', 'service',
+        'free', 'bulk', 'wholesale', 'retail', 'online', 'order', 'request'
+    }
+    
     text_lower = text.lower()
     mentioned_products = []
     
-    print(f"    DEBUG: Analyzing text: {text[:100]}...")
+    print(f"    DEBUG: Analyzing {'SUBJECT' if is_subject else 'text'}: {text[:100]}...")
     
-    # Check for exact and partial product name matches
+    # Priority 1: Exact product name matches (highest confidence)
+    exact_matches = []
     for product_dict in product_catalog:
-        product_name = product_dict['name'].lower()
-        category = product_dict.get('category', '').lower()
-        
-        # Skip empty products
+        product_name = product_dict['name']
         if not product_name:
             continue
-        
-        # Method 1: Exact match
-        if product_name in text_lower:
-            mentioned_products.append(product_dict['name'])
-            print(f"    DEBUG: Exact match found: '{product_name}'")
-            continue
-        
-        # Method 2: Partial word matching for multi-word products
-        if len(product_name.split()) > 1:
-            product_words = [word for word in product_name.split() if len(word) > 3]
-            matches = sum(1 for word in product_words if word in text_lower)
             
-            # If more than half the significant words match, consider it a match
-            if matches >= len(product_words) / 2 and matches > 0:
-                mentioned_products.append(product_dict['name'])
-                print(f"    DEBUG: Partial match found: '{product_name}' (matched {matches}/{len(product_words)} words)")
+        if product_name.lower() in text_lower:
+            exact_matches.append(product_name)
+            print(f"    DEBUG: Exact match found: '{product_name}'")
+    
+    # If we have exact matches, prioritize them
+    if exact_matches:
+        # For subjects, return exact matches immediately (highest priority)
+        if is_subject:
+            return exact_matches[:3]  # Limit to top 3 for subjects
+        else:
+            mentioned_products.extend(exact_matches)
+    
+    # Priority 2: Multi-word product partial matches (only if meaningful)
+    if len(mentioned_products) < 5:  # Only if we don't have too many already
+        for product_dict in product_catalog:
+            product_name = product_dict['name']
+            if not product_name or product_name in [p for p in mentioned_products]:
                 continue
+            
+            product_words = [word for word in product_name.lower().split() 
+                           if len(word) > 3 and word not in GENERIC_TERMS]
+            
+            if len(product_words) >= 2:  # Only for multi-word products
+                matches = sum(1 for word in product_words if word in text_lower)
+                
+                # Need at least 2 meaningful words to match
+                if matches >= 2 and matches >= len(product_words) * 0.6:
+                    mentioned_products.append(product_name)
+                    print(f"    DEBUG: Multi-word match: '{product_name}' (matched {matches}/{len(product_words)} words)")
+    
+    # Priority 3: Look for specific product types mentioned (only if we don't have many matches)
+    if len(mentioned_products) < 3:
+        # Focus on clear product mentions in the text
+        product_indicators = {
+            'bag': ['bag', 'bags', 'tote', 'drawstring', 'mesh bag', 'paper bag', 'shopping bag'],
+            'adapter': ['adapter', 'adapters', 'travel adapter', 'power adapter'],
+            'apparel': ['shirt', 'polo', 't-shirt', 'hoodie', 'jacket', 'vest', 'apron'],
+            'drinkware': ['mug', 'bottle', 'tumbler', 'flask', 'cup'],
+            'accessories': ['lanyard', 'keychain', 'umbrella', 'cap', 'hat'],
+            'stationery': ['pen', 'notebook', 'folder', 'organizer', 'diary']
+        }
         
-        # Method 3: Check for key product keywords
-        product_keywords = product_name.split()
-        for keyword in product_keywords:
-            if len(keyword) > 4 and keyword in text_lower:
-                # Check if it's a meaningful keyword (not common words)
-                common_words = ['the', 'and', 'with', 'for', 'custom', 'premium', 'standard']
-                if keyword not in common_words:
-                    mentioned_products.append(f"Keyword: {keyword.title()}")
-                    print(f"    DEBUG: Keyword match found: '{keyword}' from product '{product_name}'")
-        
-        # Check for category mentions
-        if category and len(category) > 3 and category in text_lower:
-            mentioned_products.append(f"Category: {category.title()}")
-            print(f"    DEBUG: Category match found: '{category}'")
+        for category, keywords in product_indicators.items():
+            for keyword in keywords:
+                if keyword in text_lower and keyword not in GENERIC_TERMS:
+                    # Check if this maps to an actual product in catalog
+                    matching_products = [p['name'] for p in product_catalog 
+                                       if keyword.lower() in p['name'].lower() 
+                                       and p['name'] not in mentioned_products]
+                    
+                    if matching_products:
+                        # Add the most specific match
+                        best_match = min(matching_products, key=len)  # Shortest name = most specific
+                        mentioned_products.append(best_match)
+                        print(f"    DEBUG: Product type match: '{keyword}' → '{best_match}'")
+                        break  # Only one per category
     
-    # Method 4: Look for common product patterns
-    product_patterns = [
-        'bag', 'bags', 'adapter', 'adapters', 'shirt', 'shirts', 'mug', 'mugs', 
-        'cap', 'caps', 'bottle', 'bottles', 'lanyard', 'lanyards', 'umbrella', 'umbrellas',
-        'pen', 'pens', 'notebook', 'notebooks', 'keychain', 'keychains', 'tote', 'drawstring',
-        'polo', 'hoodie', 'jacket', 'vest', 'backpack', 'briefcase', 'folder', 'organizer'
-    ]
+    # Remove duplicates and limit results
+    unique_products = []
+    seen = set()
+    for product in mentioned_products:
+        if product.lower() not in seen:
+            unique_products.append(product)
+            seen.add(product.lower())
     
-    for pattern in product_patterns:
-        if pattern in text_lower:
-            mentioned_products.append(f"Product Pattern: {pattern.title()}")
-            print(f"    DEBUG: Product pattern found: '{pattern}'")
+    # Limit total results
+    max_results = 3 if is_subject else 5
+    final_products = unique_products[:max_results]
     
-    unique_products = list(set(mentioned_products))
-    print(f"    DEBUG: Total unique products found: {len(unique_products)}")
+    print(f"    DEBUG: Final products ({len(final_products)}): {final_products}")
     
-    return unique_products
+    return final_products
 
 def analyze_lead_products(email: str, product_catalog: List[Dict], start_date: datetime, end_date: datetime) -> Dict:
     """Analyze a lead's product interests based on Freshdesk tickets"""
@@ -336,44 +364,118 @@ def analyze_lead_products(email: str, product_catalog: List[Dict], start_date: d
         
         result['ticket_subjects'].append(subject)
         
-        # Extract products from ticket subject and description
-        print(f"    DEBUG: Extracting products from subject and description...")
-        ticket_text = f"{subject} {description}"
-        products_in_ticket = extract_product_mentions(ticket_text, product_catalog)
-        print(f"    DEBUG: Found {len(products_in_ticket)} products in ticket content")
-        all_product_mentions.extend(products_in_ticket)
+        # Extract products from ticket subject (highest priority)
+        print(f"    DEBUG: Extracting products from subject...")
+        subject_products = extract_product_mentions(subject, product_catalog, is_subject=True)
+        print(f"    DEBUG: Found {len(subject_products)} products in subject")
+        all_product_mentions.extend(subject_products)
+        
+        # Extract products from description (lower priority, only if subject didn't yield much)
+        if len(subject_products) < 2 and description:
+            print(f"    DEBUG: Extracting products from description...")
+            desc_products = extract_product_mentions(description, product_catalog, is_subject=False)
+            print(f"    DEBUG: Found {len(desc_products)} products in description")
+            all_product_mentions.extend(desc_products)
         
         # Get conversations for this ticket
         print(f"    DEBUG: Getting conversations for ticket {ticket_id}...")
         conversations = get_ticket_conversations(ticket_id)
         print(f"    DEBUG: Found {len(conversations)} conversations")
         
-        for j, conv in enumerate(conversations):
+        # Only analyze first few conversations to avoid noise
+        for j, conv in enumerate(conversations[:3]):  # Limit to first 3 conversations
             if isinstance(conv, dict):
                 body_text = conv.get('body_text', '')
-                if body_text:
-                    print(f"      DEBUG: Analyzing conversation {j+1}: {body_text[:50]}...")
+                user_id = conv.get('user_id')
+                from_email = conv.get('from_email', '').lower()
+                
+                # Focus on customer messages (not internal staff responses)
+                is_customer_message = (from_email and email.lower() in from_email) or not user_id
+                
+                if body_text and is_customer_message:
+                    print(f"      DEBUG: Analyzing customer conversation {j+1}: {body_text[:50]}...")
                     # Store snippet for analysis
                     snippet = body_text[:200] + "..." if len(body_text) > 200 else body_text
                     result['conversation_snippets'].append(snippet)
                     
-                    # Extract products from conversation
-                    conv_products = extract_product_mentions(body_text, product_catalog)
-                    print(f"      DEBUG: Found {len(conv_products)} products in conversation")
+                    # Extract products from customer conversation only
+                    conv_products = extract_product_mentions(body_text, product_catalog, is_subject=False)
+                    print(f"      DEBUG: Found {len(conv_products)} products in customer message")
                     all_product_mentions.extend(conv_products)
+                elif body_text:
+                    print(f"      DEBUG: Skipping staff message {j+1}")
+                else:
+                    print(f"      DEBUG: Empty conversation {j+1}")
         
         # Small delay to avoid rate limiting
         time.sleep(0.1)
     
-    # Remove duplicates and sort
-    unique_products = sorted(list(set(all_product_mentions)))
-    result['product_mentions'] = unique_products
+    # Group and simplify product mentions
+    simplified_products = simplify_product_mentions(all_product_mentions)
+    result['product_mentions'] = simplified_products
     
     print(f"  DEBUG: Final product analysis for {email}:")
-    print(f"  DEBUG: Total product mentions found: {len(unique_products)}")
-    print(f"  DEBUG: Products: {unique_products}")
+    print(f"  DEBUG: Total product mentions found: {len(simplified_products)}")
+    print(f"  DEBUG: Products: {simplified_products}")
     
     return result
+
+def simplify_product_mentions(product_mentions: List[str]) -> List[str]:
+    """Group and simplify product mentions to avoid redundancy"""
+    if not product_mentions:
+        return []
+    
+    # Remove exact duplicates first
+    unique_mentions = list(set(product_mentions))
+    
+    # Group similar products
+    grouped_products = {}
+    
+    for product in unique_mentions:
+        product_lower = product.lower()
+        
+        # Find the base product type
+        base_type = None
+        
+        # Common groupings
+        if any(term in product_lower for term in ['drawstring', 'mesh bag', 'paper bag', 'tote bag']):
+            base_type = 'Bags'
+        elif any(term in product_lower for term in ['adapter', 'travel adapter', 'power adapter']):
+            base_type = 'Adapters'
+        elif any(term in product_lower for term in ['shirt', 'polo', 't-shirt', 'hoodie', 'jacket']):
+            base_type = 'Apparel'
+        elif any(term in product_lower for term in ['mug', 'bottle', 'tumbler', 'cup']):
+            base_type = 'Drinkware'
+        elif any(term in product_lower for term in ['pen', 'notebook', 'folder', 'diary']):
+            base_type = 'Stationery'
+        elif any(term in product_lower for term in ['lanyard', 'keychain', 'umbrella']):
+            base_type = 'Accessories'
+        else:
+            base_type = product  # Keep as-is if no grouping applies
+        
+        if base_type not in grouped_products:
+            grouped_products[base_type] = []
+        grouped_products[base_type].append(product)
+    
+    # Create simplified list
+    simplified = []
+    for base_type, products in grouped_products.items():
+        if len(products) == 1:
+            simplified.append(products[0])
+        elif len(products) > 1 and base_type in ['Bags', 'Adapters', 'Apparel', 'Drinkware', 'Stationery', 'Accessories']:
+            # Show variety if multiple similar products
+            unique_products = list(set(products))
+            if len(unique_products) > 1:
+                simplified.append(f"{base_type} (Various)")
+            else:
+                simplified.append(unique_products[0])
+        else:
+            # Keep the most specific product name
+            best_product = min(products, key=len)  # Shortest = most specific
+            simplified.append(best_product)
+    
+    # Sort and limit to top 5 most relevant
+    return sorted(simplified)[:5]
 
 def analyze_leads(input_csv_path="./output/not_spam_leads.csv", 
                  output_csv_path="./output/leads_with_products.csv",
