@@ -11,6 +11,14 @@ from dotenv import load_dotenv
 import re
 from typing import List, Dict, Optional, Tuple
 import calendar
+import csv
+
+# Get the project root directory when running directly
+if __name__ == "__main__":
+    # If running directly, adjust path
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    sys.path.insert(0, project_root)
+    os.chdir(project_root)  # Change to project root
 
 # Load environment variables
 load_dotenv()
@@ -100,7 +108,10 @@ def is_ticket_in_analysis_period(ticket: Dict, start_date: datetime, end_date: d
     return start_date <= ticket_date <= end_date
 
 def get_tickets_for_email_in_period(email: str, start_date: datetime, end_date: datetime) -> List[Dict]:
-    """Get all tickets for an email within a specific date range using the same approach as spam_detector"""
+    """
+    Get all tickets associated with an email from Freshdesk within the date range.
+    Uses the EXACT same approach as spam_detector.py for consistency.
+    """
     print(f"  DEBUG: Fetching tickets for {email}...")
     print(f"  DEBUG: Date range: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
     
@@ -113,79 +124,81 @@ def get_tickets_for_email_in_period(email: str, start_date: datetime, end_date: 
     auth = HTTPBasicAuth(FRESHDESK_API_KEY, "X")
     headers = {"Content-Type": "application/json"}
     all_tickets = []
-    
+
+    # Approach 1: Try search query with date filters (EXACT copy from spam_detector)
     try:
-        # Approach 1: Try search query with spaces around AND operators
         search_url = f"https://{FRESHDESK_DOMAIN}.freshdesk.com/api/v2/search/tickets"
-        print(f"  DEBUG: Search URL: {search_url}")
-        
-        # Format dates for Freshdesk query with proper spacing
+        # Format dates for Freshdesk query
         start_str = start_date.strftime("%Y-%m-%d")
         end_str = end_date.strftime("%Y-%m-%d")
-        
+
+        # Try with date range in query
         query = f"email:'{email}' AND created_at:>'{start_str}' AND created_at:<'{end_str}'"
         params = {"query": query}
-        print(f"  DEBUG: Query with proper spacing: {query}")
-        
+
         response = requests.get(search_url, headers=headers, auth=auth, params=params)
-        print(f"  DEBUG: Search response status: {response.status_code}")
-        
+        print(f"  DEBUG: Search with date filter response status: {response.status_code}")
+
         if response.status_code == 200:
             tickets = response.json()
-            print(f"  DEBUG: Found {len(tickets)} tickets from search")
             if tickets:
                 # Filter tickets to ensure they're in date range
                 filtered_tickets = [t for t in tickets if is_ticket_in_analysis_period(t, start_date, end_date)]
-                print(f"  DEBUG: {len(filtered_tickets)} tickets after date filtering")
-                return filtered_tickets
+                all_tickets.extend(filtered_tickets)
+                print(f"  DEBUG: Found {len(filtered_tickets)} tickets with date filter")
+                return all_tickets
         else:
             print(f"  DEBUG: Search with date filter failed: {response.text}")
-        
-        # Approach 2: Get all tickets for email using search (no date filter)
-        print("  DEBUG: Trying search without date filter...")
+    except Exception as e:
+        print_colored(f"  DEBUG: Search query with date filter approach failed: {e}", Colors.YELLOW)
+
+    # Approach 2: Get all tickets for email and filter by date (EXACT copy from spam_detector)
+    try:
+        search_url = f"https://{FRESHDESK_DOMAIN}.freshdesk.com/api/v2/search/tickets"
         params = {"query": f"email:'{email}'"}
+
         response = requests.get(search_url, headers=headers, auth=auth, params=params)
-        print(f"  DEBUG: Search response status: {response.status_code}")
-        
+        print(f"  DEBUG: Search without date filter response status: {response.status_code}")
+
         if response.status_code == 200:
             tickets = response.json()
-            print(f"  DEBUG: Found {len(tickets)} total tickets for email")
             if tickets:
-                # Filter by date range using our date checking function
+                # Filter tickets by date range
                 filtered_tickets = [t for t in tickets if is_ticket_in_analysis_period(t, start_date, end_date)]
-                print(f"  DEBUG: {len(filtered_tickets)} tickets after date filtering")
                 all_tickets.extend(filtered_tickets)
+                print(f"  DEBUG: Found {len(filtered_tickets)} tickets after filtering")
                 return all_tickets
         else:
             print(f"  DEBUG: Search without date filter failed: {response.text}")
-        
-        # Approach 3: Use direct filter query like spam_detector (most reliable)
-        print("  DEBUG: Trying direct filter approach like spam_detector...")
+    except Exception as e:
+        print_colored(f"  DEBUG: Search query approach failed: {e}", Colors.YELLOW)
+
+    # Approach 3: Try direct filter query (EXACT copy from spam_detector)
+    try:
         filter_url = f"https://{FRESHDESK_DOMAIN}.freshdesk.com/api/v2/tickets"
         params = {"email": email}
-        print(f"  DEBUG: Filter URL: {filter_url}")
-        
+
         response = requests.get(filter_url, headers=headers, auth=auth, params=params)
-        print(f"  DEBUG: Filter response status: {response.status_code}")
-        
+        print(f"  DEBUG: Direct filter response status: {response.status_code}")
+
         if response.status_code == 200:
             tickets = response.json()
-            print(f"  DEBUG: Found {len(tickets)} total tickets for email using filter")
             if tickets:
-                # Filter by date range using our date checking function
+                # Filter tickets by date range
                 filtered_tickets = [t for t in tickets if is_ticket_in_analysis_period(t, start_date, end_date)]
-                print(f"  DEBUG: {len(filtered_tickets)} tickets after date filtering")
                 all_tickets.extend(filtered_tickets)
+                print(f"  DEBUG: Found {len(filtered_tickets)} tickets with direct filter")
                 return all_tickets
         else:
-            print(f"  DEBUG: Filter approach failed: {response.text}")
-        
-        print("  DEBUG: No tickets found with any approach")
-        return []
-        
+            print(f"  DEBUG: Direct filter failed: {response.text}")
     except Exception as e:
-        print_colored(f"  DEBUG: Exception getting tickets for {email}: {e}", Colors.RED)
-        return []
+        print_colored(f"  DEBUG: Filter query approach failed: {e}", Colors.YELLOW)
+
+    # If we've reached here, we couldn't get tickets using any approach
+    if not all_tickets:
+        print_colored(f"  DEBUG: Could not retrieve tickets for {email} using available API methods", Colors.YELLOW)
+
+    return all_tickets
 
 def extract_product_mentions(text: str, product_catalog: pd.DataFrame) -> List[str]:
     """Extract product mentions from text using product catalog"""
@@ -411,18 +424,40 @@ def test_ticket_comparison(email: str, start_date: datetime, end_date: datetime)
         print_colored(f"Error testing spam detector: {e}", Colors.RED)
 
 def main():
-    """Standalone main function for testing"""
-    # Test with a known email from the not_spam_leads.csv
+    """Standalone main function for testing with real emails"""
     start_date = datetime(2025, 3, 1, tzinfo=timezone.utc)
     end_date = datetime(2025, 5, 31, 23, 59, 59, tzinfo=timezone.utc)
     
-    # Test with first few emails from the not_spam list
-    test_emails = ["james.lim@outlook.com", "david@aeacorp.com.sg", "admin@sgcarstore.com"]
+    # Test with actual not_spam_leads.csv
+    if os.path.exists("./output/not_spam_leads.csv"):
+        print_colored("Testing with actual not_spam_leads.csv...", Colors.GREEN)
+        # Read first 3 emails from the file
+        test_emails = []
+        try:
+            with open("./output/not_spam_leads.csv", 'r') as f:
+                reader = csv.DictReader(f)
+                for i, row in enumerate(reader):
+                    if i < 3:  # Test first 3 emails
+                        test_emails.append(row['email'])
+                    else:
+                        break
+        except Exception as e:
+            print_colored(f"Error reading not_spam_leads.csv: {e}", Colors.RED)
+            test_emails = ["james.lim@outlook.com", "david@aeacorp.com.sg", "admin@sgcarstore.com"]
+        
+        # Test these real emails
+        for email in test_emails:
+            test_ticket_comparison(email, start_date, end_date)
+            print()
+    else:
+        print_colored("not_spam_leads.csv not found, using test emails...", Colors.YELLOW)
+        test_emails = ["james.lim@outlook.com", "david@aeacorp.com.sg", "admin@sgcarstore.com"]
+        
+        for email in test_emails:
+            test_ticket_comparison(email, start_date, end_date)
+            print()
     
-    for email in test_emails:
-        test_ticket_comparison(email, start_date, end_date)
-        print()
-    
+    # Run full analysis
     return analyze_leads()
 
 if __name__ == "__main__":
