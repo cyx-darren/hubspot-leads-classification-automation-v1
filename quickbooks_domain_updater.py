@@ -4,6 +4,7 @@ import csv
 import requests
 import json
 import base64
+import shutil
 from typing import List, Set
 from datetime import datetime
 
@@ -119,6 +120,53 @@ class QuickBooksAPI:
         print(f"✓ Total customers fetched: {len(all_customers)}")
         return all_customers
 
+def read_existing_domains(filename: str) -> Set[str]:
+    """Read existing domains from CSV file"""
+    existing_domains = set()
+    
+    if not os.path.exists(filename):
+        print(f"No existing file found: {filename}")
+        return existing_domains
+    
+    try:
+        with open(filename, 'r', encoding='utf-8') as csvfile:
+            reader = csv.reader(csvfile)
+            
+            # Skip header if it exists
+            first_row = next(reader, None)
+            if first_row and first_row[0].lower() in ['domain', 'domains']:
+                pass  # Skip header
+            elif first_row:
+                # First row is data
+                domain = first_row[0].strip().lower()
+                if domain and '.' in domain:
+                    existing_domains.add(domain)
+            
+            # Read remaining domains
+            for row in reader:
+                if row and row[0]:
+                    domain = row[0].strip().lower()
+                    if domain and '.' in domain:
+                        existing_domains.add(domain)
+        
+        print(f"✓ Read {len(existing_domains)} existing domains from {filename}")
+        
+    except Exception as e:
+        print(f"✗ Error reading existing domains: {e}")
+    
+    return existing_domains
+
+def create_backup(filename: str, backup_filename: str):
+    """Create backup of existing file"""
+    try:
+        if os.path.exists(filename):
+            shutil.copy2(filename, backup_filename)
+            print(f"✓ Created backup: {backup_filename}")
+        else:
+            print(f"No existing file to backup: {filename}")
+    except Exception as e:
+        print(f"✗ Error creating backup: {e}")
+
 def extract_domains_from_customers(customers: List[dict]) -> Set[str]:
     """Extract unique domains from customer email addresses"""
     domains = set()
@@ -147,14 +195,14 @@ def extract_domains_from_customers(customers: List[dict]) -> Set[str]:
                     email_count += 1
     
     print(f"✓ Processed {email_count} email addresses")
-    print(f"✓ Found {len(domains)} unique domains")
+    print(f"✓ Found {len(domains)} unique domains from QuickBooks")
     return domains
 
-def save_domains_to_csv(domains: Set[str], filename: str = 'Unique_Email_Domains.csv'):
-    """Save unique domains to CSV file"""
+def save_merged_domains_to_csv(all_domains: Set[str], filename: str = 'Unique_Email_Domains.csv'):
+    """Save merged domains to CSV file"""
     try:
         # Sort domains for consistent output
-        sorted_domains = sorted(domains)
+        sorted_domains = sorted(all_domains)
         
         with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
             writer = csv.writer(csvfile)
@@ -165,52 +213,78 @@ def save_domains_to_csv(domains: Set[str], filename: str = 'Unique_Email_Domains
             for domain in sorted_domains:
                 writer.writerow([domain])
         
-        print(f"✓ Saved {len(domains)} unique domains to {filename}")
-        
-        # Show sample domains
-        if domains:
-            print(f"\nSample domains (first 10):")
-            for i, domain in enumerate(sorted(domains)[:10]):
-                print(f"  {i+1}. {domain}")
-            if len(domains) > 10:
-                print(f"  ... and {len(domains) - 10} more")
+        print(f"✓ Saved {len(all_domains)} total domains to {filename}")
         
     except Exception as e:
         print(f"✗ Error saving domains to CSV: {e}")
 
 def main():
-    print("=== QuickBooks Domain Updater ===")
+    print("=== QuickBooks Domain Updater (Merge Mode) ===")
     print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
+    filename = 'Unique_Email_Domains.csv'
+    backup_filename = 'Unique_Email_Domains_backup.csv'
+    
     try:
-        # Initialize QuickBooks API
-        print("\n1. Initializing QuickBooks API...")
+        # Step 1: Read existing domains
+        print("\n1. Reading existing domains...")
+        existing_domains = read_existing_domains(filename)
+        
+        # Step 2: Create backup
+        print("\n2. Creating backup...")
+        create_backup(filename, backup_filename)
+        
+        # Step 3: Initialize QuickBooks API
+        print("\n3. Initializing QuickBooks API...")
         qb_api = QuickBooksAPI()
         
-        # Fetch customers
-        print("\n2. Fetching customers...")
+        # Step 4: Fetch customers
+        print("\n4. Fetching customers...")
         customers = qb_api.get_customers()
         
         if not customers:
             print("No customers found in QuickBooks")
-            return
+            return 1
         
-        # Extract domains
-        print("\n3. Extracting domains...")
-        domains = extract_domains_from_customers(customers)
+        # Step 5: Extract domains from QuickBooks
+        print("\n5. Extracting domains...")
+        qb_domains = extract_domains_from_customers(customers)
         
-        if not domains:
-            print("No email domains found")
-            return
+        if not qb_domains:
+            print("No email domains found in QuickBooks")
+            return 1
         
-        # Save to CSV
-        print("\n4. Saving domains to CSV...")
-        save_domains_to_csv(domains)
+        # Step 6: Find new domains
+        print("\n6. Comparing domains...")
+        new_domains = qb_domains - existing_domains
         
-        print(f"\n✓ Domain extraction completed successfully!")
-        print(f"  - Processed {len(customers)} customers")
-        print(f"  - Found {len(domains)} unique email domains")
-        print(f"  - Saved to Unique_Email_Domains.csv")
+        if new_domains:
+            # Sort new domains for display
+            sorted_new_domains = sorted(new_domains)
+            
+            print(f"✓ Found {len(new_domains)} new domains:")
+            
+            # Display new domains (limit to first 10 for readability)
+            if len(new_domains) <= 10:
+                print(f"  New domains: {', '.join(sorted_new_domains)}")
+            else:
+                print(f"  New domains: {', '.join(sorted_new_domains[:10])}... and {len(new_domains) - 10} more")
+            
+            # Step 7: Merge and save
+            print("\n7. Merging and saving domains...")
+            all_domains = existing_domains | qb_domains
+            save_merged_domains_to_csv(all_domains, filename)
+            
+            print(f"\n✓ Domain update completed successfully!")
+            print(f"  - Added {len(new_domains)} new domains")
+            print(f"  - Total domains now: {len(all_domains)}")
+            print(f"  - Backup saved as: {backup_filename}")
+            
+        else:
+            print("✓ No new domains found - file is already up to date")
+            print(f"  - QuickBooks domains: {len(qb_domains)}")
+            print(f"  - Existing domains: {len(existing_domains)}")
+            print(f"  - All QuickBooks domains already exist in the file")
         
     except Exception as e:
         print(f"✗ Error: {e}")
