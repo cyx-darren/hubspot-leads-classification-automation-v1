@@ -100,7 +100,7 @@ def is_ticket_in_analysis_period(ticket: Dict, start_date: datetime, end_date: d
     return start_date <= ticket_date <= end_date
 
 def get_tickets_for_email_in_period(email: str, start_date: datetime, end_date: datetime) -> List[Dict]:
-    """Get all tickets for an email within a specific date range"""
+    """Get all tickets for an email within a specific date range using the same approach as spam_detector"""
     print(f"  DEBUG: Fetching tickets for {email}...")
     print(f"  DEBUG: Date range: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
     
@@ -112,19 +112,20 @@ def get_tickets_for_email_in_period(email: str, start_date: datetime, end_date: 
     
     auth = HTTPBasicAuth(FRESHDESK_API_KEY, "X")
     headers = {"Content-Type": "application/json"}
+    all_tickets = []
     
     try:
-        # Try search approach first
+        # Approach 1: Try search query with spaces around AND operators
         search_url = f"https://{FRESHDESK_DOMAIN}.freshdesk.com/api/v2/search/tickets"
         print(f"  DEBUG: Search URL: {search_url}")
         
-        # Format dates for Freshdesk query
+        # Format dates for Freshdesk query with proper spacing
         start_str = start_date.strftime("%Y-%m-%d")
         end_str = end_date.strftime("%Y-%m-%d")
         
         query = f"email:'{email}' AND created_at:>'{start_str}' AND created_at:<'{end_str}'"
         params = {"query": query}
-        print(f"  DEBUG: Query: {query}")
+        print(f"  DEBUG: Query with proper spacing: {query}")
         
         response = requests.get(search_url, headers=headers, auth=auth, params=params)
         print(f"  DEBUG: Search response status: {response.status_code}")
@@ -138,26 +139,50 @@ def get_tickets_for_email_in_period(email: str, start_date: datetime, end_date: 
                 print(f"  DEBUG: {len(filtered_tickets)} tickets after date filtering")
                 return filtered_tickets
         else:
-            print(f"  DEBUG: Search failed with error: {response.text}")
+            print(f"  DEBUG: Search with date filter failed: {response.text}")
         
-        # Fallback: get all tickets for email and filter
-        print("  DEBUG: Trying fallback approach...")
+        # Approach 2: Get all tickets for email using search (no date filter)
+        print("  DEBUG: Trying search without date filter...")
         params = {"query": f"email:'{email}'"}
         response = requests.get(search_url, headers=headers, auth=auth, params=params)
-        print(f"  DEBUG: Fallback response status: {response.status_code}")
+        print(f"  DEBUG: Search response status: {response.status_code}")
         
         if response.status_code == 200:
-            all_tickets = response.json()
-            print(f"  DEBUG: Found {len(all_tickets)} total tickets for email")
-            # Filter by date range using our date checking function
-            filtered_tickets = [t for t in all_tickets if is_ticket_in_analysis_period(t, start_date, end_date)]
-            print(f"  DEBUG: {len(filtered_tickets)} tickets after date filtering")
-            return filtered_tickets
+            tickets = response.json()
+            print(f"  DEBUG: Found {len(tickets)} total tickets for email")
+            if tickets:
+                # Filter by date range using our date checking function
+                filtered_tickets = [t for t in tickets if is_ticket_in_analysis_period(t, start_date, end_date)]
+                print(f"  DEBUG: {len(filtered_tickets)} tickets after date filtering")
+                all_tickets.extend(filtered_tickets)
+                return all_tickets
         else:
-            print(f"  DEBUG: Fallback failed with error: {response.text}")
+            print(f"  DEBUG: Search without date filter failed: {response.text}")
+        
+        # Approach 3: Use direct filter query like spam_detector (most reliable)
+        print("  DEBUG: Trying direct filter approach like spam_detector...")
+        filter_url = f"https://{FRESHDESK_DOMAIN}.freshdesk.com/api/v2/tickets"
+        params = {"email": email}
+        print(f"  DEBUG: Filter URL: {filter_url}")
+        
+        response = requests.get(filter_url, headers=headers, auth=auth, params=params)
+        print(f"  DEBUG: Filter response status: {response.status_code}")
+        
+        if response.status_code == 200:
+            tickets = response.json()
+            print(f"  DEBUG: Found {len(tickets)} total tickets for email using filter")
+            if tickets:
+                # Filter by date range using our date checking function
+                filtered_tickets = [t for t in tickets if is_ticket_in_analysis_period(t, start_date, end_date)]
+                print(f"  DEBUG: {len(filtered_tickets)} tickets after date filtering")
+                all_tickets.extend(filtered_tickets)
+                return all_tickets
+        else:
+            print(f"  DEBUG: Filter approach failed: {response.text}")
         
         print("  DEBUG: No tickets found with any approach")
         return []
+        
     except Exception as e:
         print_colored(f"  DEBUG: Exception getting tickets for {email}: {e}", Colors.RED)
         return []
