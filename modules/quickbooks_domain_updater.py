@@ -58,32 +58,68 @@ def print_colored(text: str, color: str):
 
 def get_access_token():
     """Get access token using refresh token"""
+    import datetime
+    
     token_url = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
     
     try:
+        # Add timestamp check
+        print(f"Current time: {datetime.datetime.now()}")
+        print(f"Token refresh attempt at: {datetime.datetime.now().isoformat()}")
+        
+        # Check refresh token details
+        stored_token = os.environ.get('QUICKBOOKS_REFRESH_TOKEN', '')
+        print(f"Refresh token starts with: {stored_token[:20]}...")
+        print(f"Refresh token ends with: ...{stored_token[-20:]}")
+        print(f"Refresh token length: {len(stored_token)}")
+        
         # Add debug info (safely showing only first 20 chars)
         print(f"Using refresh token: {QB_REFRESH_TOKEN[:20] if QB_REFRESH_TOKEN else 'None'}...")
         print(f"Client ID: {QB_CLIENT_ID[:20] if QB_CLIENT_ID else 'None'}...")
+        print(f"Company ID: {QB_COMPANY_ID[:20] if QB_COMPANY_ID else 'None'}...")
         
-        response = requests.post(
-            token_url,
-            headers={
-                'Accept': 'application/json',
-                'Content-Type': 'application/x-www-form-urlencoded'
-            },
-            data={
-                'grant_type': 'refresh_token',
-                'refresh_token': QB_REFRESH_TOKEN,
-                'client_id': QB_CLIENT_ID,
-                'client_secret': QB_CLIENT_SECRET
-            }
-        )
+        headers = {
+            'Accept': 'application/json',
+            'Content-Type': 'application/x-www-form-urlencoded'
+        }
+        
+        data = {
+            'grant_type': 'refresh_token',
+            'refresh_token': QB_REFRESH_TOKEN,
+            'client_id': QB_CLIENT_ID,
+            'client_secret': QB_CLIENT_SECRET
+        }
+        
+        print(f"Request URL: {token_url}")
+        print(f"Request headers: {headers}")
+        print(f"Request data keys: {list(data.keys())}")
+        
+        response = requests.post(token_url, headers=headers, data=data)
         
         print(f"Token response status: {response.status_code}")
+        print(f"Response headers: {dict(response.headers)}")
+        
         if response.status_code != 200:
             print(f"Token error response: {response.text}")
         
         # Check for specific error conditions
+        if response.status_code == 400:
+            print(f"Full error response: {response.text}")
+            print(f"Request headers: {headers}")
+            # Check if it's actually a token expiry or something else
+            try:
+                error_data = response.json()
+                if error_data.get('error') == 'invalid_grant':
+                    print("This could be:")
+                    print("1. Token was revoked (did you disconnect the app?)")
+                    print("2. Token was already used (refresh tokens are single-use)")
+                    print("3. Wrong company ID or credentials")
+                    print("4. Token belongs to a different app")
+                    print("5. Token has expired (QuickBooks tokens expire after 100 days)")
+                    print("6. App credentials don't match the token")
+            except:
+                print("Could not parse error response as JSON")
+        
         if response.status_code == 401:
             error_text = response.text.lower()
             if "invalid_grant" in error_text or "unauthorized" in error_text:
@@ -98,10 +134,13 @@ def get_access_token():
         
         response.raise_for_status()
         token_data = response.json()
+        print(f"Successfully got access token: {token_data.get('access_token', '')[:20]}...")
         return token_data.get('access_token')
         
     except Exception as e:
         print_colored(f"Token refresh error details: {str(e)}", 'RED')
+        import traceback
+        print(f"Full traceback: {traceback.format_exc()}")
         return None
 
 def extract_main_domain(domain):
