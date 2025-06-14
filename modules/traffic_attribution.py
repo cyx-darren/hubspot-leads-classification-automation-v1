@@ -95,13 +95,13 @@ class LeadAttributionAnalyzer:
             raise
 
         # Load customer data from QuickBooks
-        try:
-            self.customers_df = self.load_customers_from_quickbooks()
+        self.customers_df = self.load_customers_from_quickbooks()
+        
+        # Check if we got customer data
+        if len(self.customers_df) > 0:
             print_colored(f"✓ Loaded {len(self.customers_df)} customer records from QuickBooks", Colors.GREEN)
-        except Exception as e:
-            print_colored(f"Warning: Could not load QuickBooks customers: {e}", Colors.YELLOW)
-            # Create empty DataFrame as fallback
-            self.customers_df = pd.DataFrame(columns=['email'])
+        else:
+            print_colored("✓ Continuing without QuickBooks customer data", Colors.BLUE)
 
         # Initialize traffic data loader
         self.traffic_loader = TrafficDataLoader()
@@ -149,6 +149,7 @@ class LeadAttributionAnalyzer:
             
             if not customers:
                 print_colored("No customers retrieved from QuickBooks", Colors.YELLOW)
+                print_colored("This means 'Direct' traffic attribution won't be available", Colors.YELLOW)
                 return pd.DataFrame(columns=['email'])
             
             # Extract email addresses from customers
@@ -169,10 +170,13 @@ class LeadAttributionAnalyzer:
             return customers_df
             
         except ImportError:
-            print_colored("QuickBooks module not available - using empty customer list", Colors.YELLOW)
+            print_colored("QuickBooks module not available - continuing without customer data", Colors.YELLOW)
+            print_colored("This means 'Direct' traffic attribution won't be available", Colors.YELLOW)
             return pd.DataFrame(columns=['email'])
         except Exception as e:
-            print_colored(f"Error loading QuickBooks customers: {e}", Colors.RED)
+            print_colored(f"Warning: QuickBooks authentication failed - continuing without customer data", Colors.YELLOW)
+            print_colored(f"This means 'Direct' traffic attribution won't be available", Colors.YELLOW)
+            print_colored(f"Error details: {e}", Colors.YELLOW)
             return pd.DataFrame(columns=['email'])
 
     def load_seo_data_from_csv(self, file_path: str) -> pd.DataFrame:
@@ -475,8 +479,8 @@ class LeadAttributionAnalyzer:
 
     def process_customer_data(self):
         """Process and clean customer data"""
-        if 'email' not in self.customers_df.columns:
-            print_colored("Warning: No email column in customer data", Colors.YELLOW)
+        if self.customers_df.empty or 'email' not in self.customers_df.columns:
+            print_colored("No customer data available - direct traffic attribution disabled", Colors.BLUE)
             self.customer_emails = set()
             return
 
@@ -622,6 +626,10 @@ class LeadAttributionAnalyzer:
     def identify_direct_traffic(self):
         """Identify direct traffic from returning customers"""
         print_colored("Identifying direct traffic...", Colors.BLUE)
+
+        if not self.customer_emails:
+            print_colored("No customer data available - skipping direct traffic identification", Colors.YELLOW)
+            return
 
         # Check if each lead email is in the customer list
         direct_mask = self.leads_df['email'].isin(self.customer_emails)
