@@ -514,34 +514,44 @@ class LeadAttributionAnalyzer:
         if not self.ppc_standard_df.empty:
             print_colored(f"   Processing PPC Standard data - columns: {list(self.ppc_standard_df.columns)}", Colors.BLUE)
             
-            # Rename columns to standard names
+            # Create a copy and process standard PPC data
             standard_df = self.ppc_standard_df.copy()
-            standard_df = standard_df.rename(columns={
-                'Keyword': 'keyword',
-                'Clicks': 'clicks',
-                'Impr.': 'impressions'
-            })
             
-            # Convert impressions from string to numeric (remove commas if present)
-            if 'impressions' in standard_df.columns:
+            # Map columns properly - use actual column names from the DataFrame
+            if 'Keyword' in standard_df.columns:
+                standard_df['keyword'] = standard_df['Keyword']
+            else:
+                print_colored("   Warning: 'Keyword' column not found in standard PPC data", Colors.YELLOW)
+                continue
+            
+            if 'Clicks' in standard_df.columns:
+                standard_df['clicks'] = pd.to_numeric(standard_df['Clicks'], errors='coerce').fillna(0)
+            else:
+                print_colored("   Warning: 'Clicks' column not found in standard PPC data", Colors.YELLOW)
+                standard_df['clicks'] = 0
+            
+            if 'Impr.' in standard_df.columns:
+                # Handle impressions with commas
                 standard_df['impressions'] = pd.to_numeric(
-                    standard_df['impressions'].astype(str).str.replace(',', ''), 
+                    standard_df['Impr.'].astype(str).str.replace(',', ''), 
                     errors='coerce'
                 ).fillna(0)
-            
-            # Convert clicks to numeric
-            if 'clicks' in standard_df.columns:
-                standard_df['clicks'] = pd.to_numeric(standard_df['clicks'], errors='coerce').fillna(0)
+            else:
+                print_colored("   Warning: 'Impr.' column not found in standard PPC data", Colors.YELLOW)
+                standard_df['impressions'] = 0
             
             # Add campaign type
             standard_df['campaign_type'] = 'Standard'
             
             # Check if date column exists
-            if 'date' not in standard_df.columns:
-                print_colored("   Warning: PPC Standard data has no date column - time-based attribution disabled", Colors.YELLOW)
-                standard_df['date'] = pd.NaT  # Not a Time
-            else:
+            if 'Date' in standard_df.columns or 'date' in standard_df.columns:
+                date_col = 'Date' if 'Date' in standard_df.columns else 'date'
+                standard_df['date'] = pd.to_datetime(standard_df[date_col], errors='coerce')
                 has_date_data = True
+                print_colored("   ✓ Date column found in standard PPC data", Colors.GREEN)
+            else:
+                print_colored("   Warning: PPC Standard data has no date column - time-based attribution disabled", Colors.YELLOW)
+                standard_df['date'] = pd.NaT
                 
             frames_to_concat.append(standard_df)
 
@@ -549,74 +559,90 @@ class LeadAttributionAnalyzer:
         if not self.ppc_dynamic_df.empty:
             print_colored(f"   Processing PPC Dynamic data - columns: {list(self.ppc_dynamic_df.columns)}", Colors.BLUE)
             
-            # Rename columns to standard names
+            # Create a copy and process dynamic PPC data
             dynamic_df = self.ppc_dynamic_df.copy()
-            dynamic_df = dynamic_df.rename(columns={
-                'Dynamic ad target': 'keyword',
-                'Clicks': 'clicks',
-                'Impr.': 'impressions'
-            })
             
-            # Convert impressions from string to numeric (remove commas if present)
-            if 'impressions' in dynamic_df.columns:
+            # Map columns properly - dynamic uses 'Dynamic ad target' instead of 'Keyword'
+            if 'Dynamic ad target' in dynamic_df.columns:
+                dynamic_df['keyword'] = dynamic_df['Dynamic ad target']
+            else:
+                print_colored("   Warning: 'Dynamic ad target' column not found in dynamic PPC data", Colors.YELLOW)
+                continue
+            
+            if 'Clicks' in dynamic_df.columns:
+                dynamic_df['clicks'] = pd.to_numeric(dynamic_df['Clicks'], errors='coerce').fillna(0)
+            else:
+                print_colored("   Warning: 'Clicks' column not found in dynamic PPC data", Colors.YELLOW)
+                dynamic_df['clicks'] = 0
+            
+            if 'Impr.' in dynamic_df.columns:
+                # Handle impressions with commas
                 dynamic_df['impressions'] = pd.to_numeric(
-                    dynamic_df['impressions'].astype(str).str.replace(',', ''), 
+                    dynamic_df['Impr.'].astype(str).str.replace(',', ''), 
                     errors='coerce'
                 ).fillna(0)
-            
-            # Convert clicks to numeric
-            if 'clicks' in dynamic_df.columns:
-                dynamic_df['clicks'] = pd.to_numeric(dynamic_df['clicks'], errors='coerce').fillna(0)
+            else:
+                print_colored("   Warning: 'Impr.' column not found in dynamic PPC data", Colors.YELLOW)
+                dynamic_df['impressions'] = 0
             
             # Add campaign type
             dynamic_df['campaign_type'] = 'Dynamic'
             
             # Check if date column exists
-            if 'date' not in dynamic_df.columns:
-                print_colored("   Warning: PPC Dynamic data has no date column - time-based attribution disabled", Colors.YELLOW)
-                dynamic_df['date'] = pd.NaT  # Not a Time
-            else:
+            if 'Date' in dynamic_df.columns or 'date' in dynamic_df.columns:
+                date_col = 'Date' if 'Date' in dynamic_df.columns else 'date'
+                dynamic_df['date'] = pd.to_datetime(dynamic_df[date_col], errors='coerce')
                 has_date_data = True
+                print_colored("   ✓ Date column found in dynamic PPC data", Colors.GREEN)
+            else:
+                print_colored("   Warning: PPC Dynamic data has no date column - time-based attribution disabled", Colors.YELLOW)
+                dynamic_df['date'] = pd.NaT
                 
             frames_to_concat.append(dynamic_df)
 
-        # Combine PPC data
-        if frames_to_concat:
-            # Define common columns (date might be NaT)
-            common_columns = ['keyword', 'clicks', 'impressions', 'campaign_type', 'date']
+        # Combine only the common columns we have
+        common_columns = ['keyword', 'clicks', 'impressions', 'campaign_type']
+        
+        # Add date column if we have date data
+        if has_date_data:
+            common_columns.append('date')
+
+        # Filter frames to only include those with all required columns
+        valid_frames = []
+        for df in frames_to_concat:
+            if all(col in df.columns for col in common_columns):
+                valid_frames.append(df[common_columns])
+            else:
+                missing_cols = [col for col in common_columns if col not in df.columns]
+                print_colored(f"   Warning: Skipping frame missing columns: {missing_cols}", Colors.YELLOW)
+
+        if valid_frames:
+            self.combined_ppc_df = pd.concat(valid_frames, ignore_index=True)
+            print_colored(f"   ✓ Combined PPC data: {len(self.combined_ppc_df)} total keywords", Colors.GREEN)
             
-            # Ensure all DataFrames have the required columns
-            for df in frames_to_concat:
-                for col in common_columns:
-                    if col not in df.columns:
-                        if col == 'date':
-                            df[col] = pd.NaT
-                        else:
-                            df[col] = 0 if col in ['clicks', 'impressions'] else 'Unknown'
+            # Clean keyword data
+            self.combined_ppc_df['keyword'] = self.combined_ppc_df['keyword'].astype(str).str.lower().str.strip()
             
-            self.combined_ppc_df = pd.concat([df[common_columns] for df in frames_to_concat]).reset_index(drop=True)
-            
-            # Process dates if available
-            if has_date_data:
+            # Add temporal columns for analysis
+            if has_date_data and 'date' in self.combined_ppc_df.columns:
                 try:
-                    self.combined_ppc_df['date'] = pd.to_datetime(self.combined_ppc_df['date'], errors='coerce')
-                    self.combined_ppc_df['day_of_week'] = self.combined_ppc_df['date'].dt.day_name()
-                    self.combined_ppc_df['hour_of_day'] = 0
-                    print_colored("✓ PPC data processed with date information", Colors.GREEN)
+                    valid_dates = pd.notna(self.combined_ppc_df['date'])
+                    if valid_dates.any():
+                        self.combined_ppc_df.loc[valid_dates, 'day_of_week'] = self.combined_ppc_df.loc[valid_dates, 'date'].dt.day_name()
+                        self.combined_ppc_df['hour_of_day'] = 0  # Default since we don't have hourly data
+                        print_colored("   ✓ PPC data processed with date information", Colors.GREEN)
+                    else:
+                        self.combined_ppc_df['day_of_week'] = 'Unknown'
+                        self.combined_ppc_df['hour_of_day'] = 0
+                        print_colored("   Warning: No valid dates found in PPC data", Colors.YELLOW)
                 except Exception as e:
-                    print_colored(f"Warning: Could not process PPC dates: {e}", Colors.YELLOW)
+                    print_colored(f"   Warning: Could not process PPC dates: {e}", Colors.YELLOW)
                     self.combined_ppc_df['day_of_week'] = 'Unknown'
                     self.combined_ppc_df['hour_of_day'] = 0
             else:
                 self.combined_ppc_df['day_of_week'] = 'Unknown'
                 self.combined_ppc_df['hour_of_day'] = 0
-                print_colored("✓ PPC data processed without date information", Colors.YELLOW)
-        else:
-            self.combined_ppc_df = pd.DataFrame()
-
-        if not self.combined_ppc_df.empty:
-            # Clean keyword data
-            self.combined_ppc_df['keyword'] = self.combined_ppc_df['keyword'].astype(str).str.lower().str.strip()
+                print_colored("   ✓ PPC data processed without date information", Colors.YELLOW)
             
             # Filter out rows with no clicks
             before_filter = len(self.combined_ppc_df)
@@ -627,6 +653,9 @@ class LeadAttributionAnalyzer:
                 print_colored(f"   Filtered out {before_filter - after_filter} PPC entries with zero clicks", Colors.BLUE)
             
             print_colored(f"✓ Final PPC dataset: {len(self.combined_ppc_df)} entries with clicks", Colors.GREEN)
+        else:
+            print_colored("   Warning: No valid PPC data frames to combine", Colors.YELLOW)
+            self.combined_ppc_df = pd.DataFrame()
 
     def create_mock_ppc_data(self, campaign_type: str) -> pd.DataFrame:
         """Create mock PPC data for testing"""
