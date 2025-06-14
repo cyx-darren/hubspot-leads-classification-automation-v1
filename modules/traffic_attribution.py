@@ -522,7 +522,7 @@ class LeadAttributionAnalyzer:
                 standard_df['keyword'] = standard_df['Keyword']
             else:
                 print_colored("   Warning: 'Keyword' column not found in standard PPC data", Colors.YELLOW)
-                continue
+                return
             
             if 'Clicks' in standard_df.columns:
                 standard_df['clicks'] = pd.to_numeric(standard_df['Clicks'], errors='coerce').fillna(0)
@@ -567,7 +567,7 @@ class LeadAttributionAnalyzer:
                 dynamic_df['keyword'] = dynamic_df['Dynamic ad target']
             else:
                 print_colored("   Warning: 'Dynamic ad target' column not found in dynamic PPC data", Colors.YELLOW)
-                continue
+                return
             
             if 'Clicks' in dynamic_df.columns:
                 dynamic_df['clicks'] = pd.to_numeric(dynamic_df['Clicks'], errors='coerce').fillna(0)
