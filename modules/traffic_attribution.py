@@ -229,7 +229,8 @@ class LeadAttributionAnalyzer:
         
         # The leads_with_products.csv has these columns:
         # email, original_classification, original_reason, total_tickets_analyzed, 
-        # products_mentioned, ticket_subjects, analysis_period
+        # products_mentioned, ticket_subjects, analysis_period, first_ticket_date, 
+        # last_ticket_date, most_recent_update
         
         # Clean email addresses
         if 'email' in self.leads_df.columns:
@@ -238,14 +239,44 @@ class LeadAttributionAnalyzer:
             print_colored("Warning: No email column found in leads data", Colors.YELLOW)
             return
 
-        # Create timestamp from analysis period or use current time
-        if 'analysis_period' in self.leads_df.columns:
-            # Extract end date from period like "March 2025 - May 2025"
-            self.leads_df['first_inquiry_timestamp'] = self.leads_df['analysis_period'].apply(
-                self.parse_analysis_period_to_date
+        # Parse actual timestamp data from lead_analyzer
+        print_colored("Processing timestamp data from tickets...", Colors.BLUE)
+        
+        # Convert timestamp columns to datetime objects
+        if 'first_ticket_date' in self.leads_df.columns:
+            # Parse first_ticket_date as primary timestamp
+            self.leads_df['first_inquiry_timestamp'] = pd.to_datetime(
+                self.leads_df['first_ticket_date'], 
+                errors='coerce'
             )
+            print_colored(f"✓ Parsed first_ticket_date for {self.leads_df['first_inquiry_timestamp'].notna().sum()} leads", Colors.GREEN)
         else:
-            self.leads_df['first_inquiry_timestamp'] = datetime.datetime.now()
+            print_colored("Warning: No first_ticket_date column found - using current time", Colors.YELLOW)
+            self.leads_df['first_inquiry_timestamp'] = pd.Timestamp.now()
+
+        # Parse additional timestamp columns for analysis
+        if 'last_ticket_date' in self.leads_df.columns:
+            self.leads_df['last_ticket_timestamp'] = pd.to_datetime(
+                self.leads_df['last_ticket_date'], 
+                errors='coerce'
+            )
+        
+        if 'most_recent_update' in self.leads_df.columns:
+            self.leads_df['most_recent_update_timestamp'] = pd.to_datetime(
+                self.leads_df['most_recent_update'], 
+                errors='coerce'
+            )
+
+        # Handle leads with missing timestamps
+        missing_timestamps = self.leads_df['first_inquiry_timestamp'].isna().sum()
+        if missing_timestamps > 0:
+            print_colored(f"Warning: {missing_timestamps} leads have missing first_ticket_date", Colors.YELLOW)
+            # Use analysis_period as fallback for missing timestamps
+            if 'analysis_period' in self.leads_df.columns:
+                fallback_mask = self.leads_df['first_inquiry_timestamp'].isna()
+                self.leads_df.loc[fallback_mask, 'first_inquiry_timestamp'] = self.leads_df.loc[fallback_mask, 'analysis_period'].apply(
+                    self.parse_analysis_period_to_date
+                )
 
         # Extract keywords from products_mentioned and ticket_subjects
         self.leads_df['extracted_keywords'] = self.leads_df.apply(
@@ -257,23 +288,45 @@ class LeadAttributionAnalyzer:
         self.leads_df['attribution_confidence'] = 0
         self.leads_df['attribution_detail'] = ''
 
-        # Extract day of week and hour for temporal analysis
-        self.leads_df['day_of_week'] = self.leads_df['first_inquiry_timestamp'].dt.day_name()
-        self.leads_df['hour_of_day'] = self.leads_df['first_inquiry_timestamp'].dt.hour
+        # Extract day of week and hour for temporal analysis using real timestamps
+        valid_timestamp_mask = self.leads_df['first_inquiry_timestamp'].notna()
+        if valid_timestamp_mask.sum() > 0:
+            self.leads_df.loc[valid_timestamp_mask, 'day_of_week'] = self.leads_df.loc[valid_timestamp_mask, 'first_inquiry_timestamp'].dt.day_name()
+            self.leads_df.loc[valid_timestamp_mask, 'hour_of_day'] = self.leads_df.loc[valid_timestamp_mask, 'first_inquiry_timestamp'].dt.hour
+        
+        # Fill missing temporal data
+        self.leads_df['day_of_week'] = self.leads_df['day_of_week'].fillna('Unknown')
+        self.leads_df['hour_of_day'] = self.leads_df['hour_of_day'].fillna(0)
 
-        # Extract product information
+        # Extract product information directly
         if 'products_mentioned' in self.leads_df.columns:
             self.leads_df['product'] = self.leads_df['products_mentioned'].fillna('')
         else:
             self.leads_df['product'] = ''
 
-        # Extract subject information
+        # Extract subject information directly
         if 'ticket_subjects' in self.leads_df.columns:
             self.leads_df['subject'] = self.leads_df['ticket_subjects'].fillna('')
         else:
             self.leads_df['subject'] = ''
 
-        print_colored("✓ Leads data processed", Colors.GREEN)
+        # Calculate ticket activity span for additional insights
+        if 'last_ticket_timestamp' in self.leads_df.columns:
+            both_timestamps_mask = (
+                self.leads_df['first_inquiry_timestamp'].notna() & 
+                self.leads_df['last_ticket_timestamp'].notna()
+            )
+            if both_timestamps_mask.sum() > 0:
+                self.leads_df.loc[both_timestamps_mask, 'ticket_span_days'] = (
+                    self.leads_df.loc[both_timestamps_mask, 'last_ticket_timestamp'] - 
+                    self.leads_df.loc[both_timestamps_mask, 'first_inquiry_timestamp']
+                ).dt.days
+
+        print_colored("✓ Leads data processed with real timestamp data", Colors.GREEN)
+        
+        # Debug information
+        timestamp_stats = self.leads_df['first_inquiry_timestamp'].describe()
+        print_colored(f"Timestamp range: {timestamp_stats['min']} to {timestamp_stats['max']}", Colors.BLUE)
 
     def parse_analysis_period_to_date(self, period_str: str) -> datetime.datetime:
         """Parse analysis period string to datetime"""
@@ -550,16 +603,23 @@ class LeadAttributionAnalyzer:
             print_colored(f"✓ Identified {seo_count} leads as SEO traffic ({seo_count/unattributed_count*100:.1f}% of unattributed)", Colors.GREEN)
 
     def identify_ppc_traffic(self):
-        """Identify traffic from PPC campaigns"""
-        print_colored("Identifying PPC traffic...", Colors.BLUE)
+        """Identify traffic from PPC campaigns using real timestamps"""
+        print_colored("Identifying PPC traffic with real timestamp matching...", Colors.BLUE)
 
         if self.combined_ppc_df.empty:
             print_colored("No PPC data available - skipping PPC attribution", Colors.YELLOW)
             return
 
-        # Only consider leads not already attributed
-        unattributed_mask = self.leads_df['attributed_source'] == 'Unknown'
+        # Only consider leads not already attributed and with valid timestamps
+        unattributed_mask = (
+            (self.leads_df['attributed_source'] == 'Unknown') & 
+            (self.leads_df['first_inquiry_timestamp'].notna())
+        )
         ppc_count = 0
+
+        if unattributed_mask.sum() == 0:
+            print_colored("No unattributed leads with valid timestamps for PPC analysis", Colors.YELLOW)
+            return
 
         # Loop through unattributed leads
         for idx, lead in self.leads_df[unattributed_mask].iterrows():
@@ -569,13 +629,18 @@ class LeadAttributionAnalyzer:
             if not lead_keywords:
                 continue
 
-            # Define time window for attribution
-            time_window_start = lead_time - datetime.timedelta(hours=self.attribution_window_hours)
+            # Ensure lead_time is timezone-aware for comparison
+            if lead_time.tz is None:
+                lead_time = lead_time.tz_localize('UTC')
+
+            # Define time window for attribution using real timestamps
+            time_window_start = lead_time - pd.Timedelta(hours=self.attribution_window_hours)
+            time_window_end = lead_time + pd.Timedelta(hours=2)  # Small buffer after lead time
             
-            # Find PPC clicks within time window
+            # Find PPC clicks within time window using proper datetime comparison
             ppc_clicks_in_window = self.combined_ppc_df[
-                (self.combined_ppc_df['date'] >= time_window_start.date()) & 
-                (self.combined_ppc_df['date'] <= lead_time.date()) & 
+                (pd.to_datetime(self.combined_ppc_df['date']) >= time_window_start.normalize()) & 
+                (pd.to_datetime(self.combined_ppc_df['date']) <= time_window_end.normalize()) & 
                 (self.combined_ppc_df['clicks'] > 0)
             ]
 
@@ -601,22 +666,38 @@ class LeadAttributionAnalyzer:
                             keyword_match_score = max(keyword_match_score, similarity)
                             matched_keywords.append((lead_kw, ppc_kw, similarity))
 
-            # Calculate time proximity score
+            # Calculate time proximity score using real timestamps
             time_proximity_score = 0
             if not ppc_clicks_in_window.empty:
-                lead_date = pd.Timestamp(lead_time.date())
+                # Calculate actual time differences in hours
                 ppc_clicks_in_window = ppc_clicks_in_window.copy()
-                ppc_clicks_in_window['date_diff'] = (lead_date - pd.to_datetime(ppc_clicks_in_window['date'])).dt.days
+                ppc_dates = pd.to_datetime(ppc_clicks_in_window['date'])
                 
-                if not ppc_clicks_in_window.empty:
-                    min_days_diff = ppc_clicks_in_window['date_diff'].min()
+                # Calculate time differences in hours
+                time_diffs = []
+                for ppc_date in ppc_dates:
+                    if ppc_date.tz is None:
+                        ppc_date = ppc_date.tz_localize('UTC')
                     
-                    if min_days_diff == 0:
+                    time_diff_hours = abs((lead_time - ppc_date).total_seconds() / 3600)
+                    time_diffs.append(time_diff_hours)
+                
+                if time_diffs:
+                    min_hours_diff = min(time_diffs)
+                    
+                    # Score based on hours rather than days for more precision
+                    if min_hours_diff <= 1:
                         time_proximity_score = 100
-                    elif min_days_diff == 1:
-                        time_proximity_score = 90
+                    elif min_hours_diff <= 6:
+                        time_proximity_score = 95
+                    elif min_hours_diff <= 12:
+                        time_proximity_score = 85
+                    elif min_hours_diff <= 24:
+                        time_proximity_score = 75
+                    elif min_hours_diff <= 48:
+                        time_proximity_score = 60
                     else:
-                        time_proximity_score = max(0, 100 - (min_days_diff * 15))
+                        time_proximity_score = max(0, 50 - (min_hours_diff - 48) / 24 * 10)
 
             # Calculate overall PPC confidence score
             if keyword_match_score > 0 and time_proximity_score > 0:
@@ -627,7 +708,8 @@ class LeadAttributionAnalyzer:
                     self.leads_df.loc[idx, 'attribution_confidence'] = confidence_score
 
                     matched_kw_str = '; '.join([f"{l}-{p}" for l, p, s in matched_keywords[:3]])
-                    detail = f"Keyword matches: {matched_kw_str}, Time proximity: {time_proximity_score:.1f}%"
+                    min_hours = min(time_diffs) if time_diffs else 0
+                    detail = f"Keyword matches: {matched_kw_str}, Time gap: {min_hours:.1f}h, Proximity score: {time_proximity_score:.1f}%"
                     self.leads_df.loc[idx, 'attribution_detail'] = detail
 
                     ppc_count += 1
@@ -637,11 +719,18 @@ class LeadAttributionAnalyzer:
             print_colored(f"✓ Identified {ppc_count} leads as PPC traffic ({ppc_count/unattributed_count*100:.1f}% of unattributed)", Colors.GREEN)
 
     def identify_referrals(self):
-        """Identify potential referral traffic"""
-        print_colored("Identifying potential referrals...", Colors.BLUE)
+        """Identify potential referral traffic using real timestamps"""
+        print_colored("Identifying potential referrals with real timestamp analysis...", Colors.BLUE)
 
-        # Only consider leads not already attributed
-        unattributed_mask = self.leads_df['attributed_source'] == 'Unknown'
+        # Only consider leads not already attributed and with valid timestamps
+        unattributed_mask = (
+            (self.leads_df['attributed_source'] == 'Unknown') & 
+            (self.leads_df['first_inquiry_timestamp'].notna())
+        )
+
+        if unattributed_mask.sum() == 0:
+            print_colored("No unattributed leads with valid timestamps for referral analysis", Colors.YELLOW)
+            return
 
         # Extract email domains
         self.leads_df['email_domain'] = self.leads_df['email'].apply(
@@ -652,13 +741,22 @@ class LeadAttributionAnalyzer:
         domain_counts = self.leads_df['email_domain'].value_counts()
         multiple_lead_domains = domain_counts[domain_counts > 1].index.tolist()
 
-        # Look for temporal clusters
-        if 'first_inquiry_timestamp' in self.leads_df.columns:
-            self.leads_df['inquiry_date'] = self.leads_df['first_inquiry_timestamp'].dt.date
-            date_counts = self.leads_df['inquiry_date'].value_counts()
+        # Look for temporal clusters using real timestamps
+        valid_timestamp_leads = self.leads_df[self.leads_df['first_inquiry_timestamp'].notna()]
+        if not valid_timestamp_leads.empty:
+            # Group by date for temporal analysis
+            valid_timestamp_leads = valid_timestamp_leads.copy()
+            valid_timestamp_leads['inquiry_date'] = valid_timestamp_leads['first_inquiry_timestamp'].dt.date
+            date_counts = valid_timestamp_leads['inquiry_date'].value_counts()
             busy_dates = date_counts[date_counts > 2].index.tolist()
+            
+            # Also look for hourly clusters (more precise)
+            valid_timestamp_leads['inquiry_hour'] = valid_timestamp_leads['first_inquiry_timestamp'].dt.floor('H')
+            hour_counts = valid_timestamp_leads['inquiry_hour'].value_counts()
+            busy_hours = hour_counts[hour_counts > 1].index.tolist()
         else:
             busy_dates = []
+            busy_hours = []
 
         referral_count = 0
 
@@ -674,23 +772,70 @@ class LeadAttributionAnalyzer:
                 referral_score += domain_score
                 referral_evidence.append(f"Domain pattern: {domain_count} leads from {lead['email_domain']}")
 
-            # Check temporal clusters
-            if hasattr(lead['first_inquiry_timestamp'], 'date') and lead['first_inquiry_timestamp'].date() in busy_dates:
-                inquiry_time = lead['first_inquiry_timestamp']
-                time_window_start = inquiry_time - datetime.timedelta(hours=3)
-                time_window_end = inquiry_time + datetime.timedelta(hours=3)
+            # Check temporal clusters using real timestamps
+            inquiry_time = lead['first_inquiry_timestamp']
+            
+            # Ensure timezone consistency
+            if inquiry_time.tz is None:
+                inquiry_time = inquiry_time.tz_localize('UTC')
 
-                time_window_inquiries = self.leads_df[
+            # Check daily clusters
+            if inquiry_time.date() in busy_dates:
+                daily_cluster_count = date_counts.get(inquiry_time.date(), 0) - 1  # Exclude current lead
+                if daily_cluster_count > 0:
+                    daily_score = min(30, daily_cluster_count * 8)
+                    referral_score += daily_score
+                    referral_evidence.append(f"Daily cluster: {daily_cluster_count} other leads on {inquiry_time.date()}")
+
+            # Check hourly clusters (more precise referral detection)
+            inquiry_hour = inquiry_time.floor('H')
+            if inquiry_hour in busy_hours:
+                # Define tighter time window for referral detection
+                time_window_start = inquiry_time - pd.Timedelta(hours=2)
+                time_window_end = inquiry_time + pd.Timedelta(hours=2)
+
+                # Find leads in the same time window
+                time_window_mask = (
                     (self.leads_df['first_inquiry_timestamp'] >= time_window_start) &
                     (self.leads_df['first_inquiry_timestamp'] <= time_window_end) &
-                    (self.leads_df.index != idx)
-                ]
-
+                    (self.leads_df.index != idx) &
+                    (self.leads_df['first_inquiry_timestamp'].notna())
+                )
+                
+                time_window_inquiries = self.leads_df[time_window_mask]
                 time_cluster_count = len(time_window_inquiries)
+                
                 if time_cluster_count > 0:
-                    time_score = min(40, time_cluster_count * 10)
+                    # Higher score for tighter time clusters
+                    hourly_time_window_start = inquiry_time - pd.Timedelta(hours=1)
+                    hourly_time_window_end = inquiry_time + pd.Timedelta(hours=1)
+                    
+                    hourly_cluster_mask = (
+                        (time_window_inquiries['first_inquiry_timestamp'] >= hourly_time_window_start) &
+                        (time_window_inquiries['first_inquiry_timestamp'] <= hourly_time_window_end)
+                    )
+                    
+                    hourly_cluster_count = hourly_cluster_mask.sum()
+                    
+                    if hourly_cluster_count > 0:
+                        time_score = min(50, hourly_cluster_count * 20)  # Higher score for tight clusters
+                        referral_evidence.append(f"Tight time cluster: {hourly_cluster_count} leads within 1 hour")
+                    else:
+                        time_score = min(35, time_cluster_count * 12)
+                        referral_evidence.append(f"Time cluster: {time_cluster_count} leads within 2 hours")
+                    
                     referral_score += time_score
-                    referral_evidence.append(f"Time cluster: {time_cluster_count} leads within 3 hours")
+
+            # Additional referral indicators using ticket span data
+            if 'ticket_span_days' in self.leads_df.columns and pd.notna(lead.get('ticket_span_days')):
+                ticket_span = lead['ticket_span_days']
+                # Short-lived inquiries might indicate referral traffic
+                if ticket_span == 0:
+                    referral_score += 10
+                    referral_evidence.append("Single-day inquiry (referral indicator)")
+                elif ticket_span <= 1:
+                    referral_score += 5
+                    referral_evidence.append("Short inquiry span (referral indicator)")
 
             # Calculate overall referral confidence score
             confidence_score = min(100, referral_score)
@@ -698,7 +843,11 @@ class LeadAttributionAnalyzer:
             if confidence_score >= self.confidence_thresholds['low']:
                 self.leads_df.loc[idx, 'attributed_source'] = 'Referral'
                 self.leads_df.loc[idx, 'attribution_confidence'] = confidence_score
-                self.leads_df.loc[idx, 'attribution_detail'] = '; '.join(referral_evidence)
+                
+                # Add timestamp info to referral details
+                timestamp_info = f"Inquiry at {inquiry_time.strftime('%Y-%m-%d %H:%M')}"
+                all_evidence = referral_evidence + [timestamp_info]
+                self.leads_df.loc[idx, 'attribution_detail'] = '; '.join(all_evidence)
 
                 referral_count += 1
 
