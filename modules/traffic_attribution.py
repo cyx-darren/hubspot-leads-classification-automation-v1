@@ -553,23 +553,30 @@ class LeadAttributionAnalyzer:
     def run_attribution(self) -> pd.DataFrame:
         """Run the full attribution process"""
         print_colored("Starting attribution analysis...", Colors.BOLD + Colors.BLUE)
-
+        
+        total_steps = 5
+        
         # Step 1: Identify direct traffic (returning customers)
+        self.display_progress_bar(1, total_steps, "Direct Traffic")
         self.identify_direct_traffic()
 
         # Step 2: Identify SEO traffic
+        self.display_progress_bar(2, total_steps, "SEO Traffic")
         self.identify_seo_traffic()
 
         # Step 3: Identify potential referrals
+        self.display_progress_bar(3, total_steps, "Referral Traffic")
         self.identify_referrals()
 
         # Step 4: Identify PPC traffic
+        self.display_progress_bar(4, total_steps, "PPC Traffic")
         self.identify_ppc_traffic()
 
         # Step 5: Calculate confidence scores and finalize attribution
+        self.display_progress_bar(5, total_steps, "Finalizing")
         self.finalize_attribution()
 
-        print_colored("✓ Attribution analysis completed", Colors.GREEN)
+        print_colored("\n✓ Attribution analysis completed", Colors.GREEN)
         return self.leads_df
 
     def identify_direct_traffic(self):
@@ -1014,6 +1021,287 @@ class LeadAttributionAnalyzer:
             print_colored(f"Error saving results: {e}", Colors.RED)
             return False
 
+    def generate_text_report(self, output_path: str = "./output/attribution_report.txt"):
+        """Generate a comprehensive text report of attribution analysis"""
+        try:
+            # Ensure output directory exists
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            
+            with open(output_path, 'w') as f:
+                f.write("="*70 + "\n")
+                f.write("TRAFFIC ATTRIBUTION ANALYSIS REPORT\n")
+                f.write("="*70 + "\n")
+                f.write(f"Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Total Leads Analyzed: {len(self.leads_df)}\n\n")
+                
+                # Attribution breakdown by source
+                f.write("1. ATTRIBUTION BREAKDOWN BY SOURCE\n")
+                f.write("-" * 40 + "\n")
+                attribution_counts = self.leads_df['attributed_source'].value_counts()
+                total_leads = len(self.leads_df)
+                
+                for source, count in attribution_counts.items():
+                    percentage = (count / total_leads) * 100
+                    f.write(f"{source:15}: {count:4d} leads ({percentage:5.1f}%)\n")
+                
+                f.write(f"\nTotal Attributed: {attribution_counts.sum()} leads\n")
+                unknown_count = attribution_counts.get('Unknown', 0)
+                if unknown_count > 0:
+                    f.write(f"Attribution Rate: {((total_leads - unknown_count) / total_leads) * 100:.1f}%\n")
+                
+                # Confidence level distribution
+                f.write("\n2. CONFIDENCE LEVEL DISTRIBUTION\n")
+                f.write("-" * 40 + "\n")
+                confidence_counts = self.leads_df['confidence_level'].value_counts()
+                
+                for level, count in confidence_counts.items():
+                    percentage = (count / total_leads) * 100
+                    f.write(f"{level:10}: {count:4d} leads ({percentage:5.1f}%)\n")
+                
+                # Top products by source
+                f.write("\n3. TOP PRODUCTS BY SOURCE\n")
+                f.write("-" * 40 + "\n")
+                
+                for source in attribution_counts.index:
+                    if source == 'Unknown':
+                        continue
+                        
+                    source_leads = self.leads_df[self.leads_df['attributed_source'] == source]
+                    if len(source_leads) == 0:
+                        continue
+                        
+                    f.write(f"\n{source} Traffic ({len(source_leads)} leads):\n")
+                    
+                    # Extract products from these leads
+                    all_products = []
+                    for _, lead in source_leads.iterrows():
+                        products = lead.get('product', '')
+                        if products:
+                            all_products.extend([p.strip() for p in str(products).split(';') if p.strip()])
+                    
+                    if all_products:
+                        product_counts = pd.Series(all_products).value_counts()
+                        for product, count in product_counts.head(5).items():
+                            f.write(f"  - {product}: {count} mentions\n")
+                    else:
+                        f.write("  - No specific products identified\n")
+                
+                # Time patterns analysis
+                f.write("\n4. TIME PATTERNS\n")
+                f.write("-" * 40 + "\n")
+                
+                # Day of week patterns
+                if 'day_of_week' in self.leads_df.columns:
+                    day_counts = self.leads_df['day_of_week'].value_counts()
+                    f.write("Day of Week Distribution:\n")
+                    day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+                    for day in day_order:
+                        if day in day_counts:
+                            count = day_counts[day]
+                            percentage = (count / total_leads) * 100
+                            f.write(f"  {day:10}: {count:3d} leads ({percentage:4.1f}%)\n")
+                
+                # Timestamp analysis
+                if 'first_inquiry_timestamp' in self.leads_df.columns:
+                    valid_timestamps = self.leads_df['first_inquiry_timestamp'].dropna()
+                    if len(valid_timestamps) > 0:
+                        f.write(f"\nTimestamp Analysis ({len(valid_timestamps)} leads with valid timestamps):\n")
+                        f.write(f"  Date Range: {valid_timestamps.min().strftime('%Y-%m-%d')} to {valid_timestamps.max().strftime('%Y-%m-%d')}\n")
+                        
+                        # Hour patterns
+                        hour_counts = valid_timestamps.dt.hour.value_counts().sort_index()
+                        peak_hour = hour_counts.idxmax()
+                        f.write(f"  Peak Hour: {peak_hour}:00 ({hour_counts[peak_hour]} leads)\n")
+                        
+                        # Business hours vs after hours
+                        business_hours = valid_timestamps.dt.hour.between(9, 17)
+                        business_count = business_hours.sum()
+                        after_hours_count = len(valid_timestamps) - business_count
+                        f.write(f"  Business Hours (9-17): {business_count} leads ({(business_count/len(valid_timestamps))*100:.1f}%)\n")
+                        f.write(f"  After Hours: {after_hours_count} leads ({(after_hours_count/len(valid_timestamps))*100:.1f}%)\n")
+                
+                # Data source breakdown
+                f.write("\n5. DATA SOURCE BREAKDOWN\n")
+                f.write("-" * 40 + "\n")
+                if 'data_source' in self.leads_df.columns:
+                    source_counts = self.leads_df['data_source'].value_counts()
+                    for data_source, count in source_counts.items():
+                        percentage = (count / total_leads) * 100
+                        f.write(f"{data_source:15}: {count:4d} leads ({percentage:5.1f}%)\n")
+                
+                # Key insights
+                f.write("\n6. KEY INSIGHTS\n")
+                f.write("-" * 40 + "\n")
+                
+                # Calculate insights
+                top_source = attribution_counts.index[0] if len(attribution_counts) > 0 else "Unknown"
+                top_source_count = attribution_counts.iloc[0] if len(attribution_counts) > 0 else 0
+                
+                high_confidence_count = confidence_counts.get('High', 0)
+                medium_confidence_count = confidence_counts.get('Medium', 0)
+                low_confidence_count = confidence_counts.get('Low', 0)
+                
+                f.write(f"• Primary traffic source: {top_source} ({top_source_count} leads)\n")
+                f.write(f"• High confidence attributions: {high_confidence_count} leads\n")
+                f.write(f"• Attribution quality: {((high_confidence_count + medium_confidence_count) / total_leads) * 100:.1f}% medium+ confidence\n")
+                
+                if 'first_inquiry_timestamp' in self.leads_df.columns and len(valid_timestamps) > 0:
+                    weekend_mask = valid_timestamps.dt.dayofweek.isin([5, 6])  # Saturday, Sunday
+                    weekend_count = weekend_mask.sum()
+                    weekday_count = len(valid_timestamps) - weekend_count
+                    f.write(f"• Weekend vs Weekday: {weekend_count} weekend, {weekday_count} weekday leads\n")
+                
+                # Recommendations
+                f.write("\n7. RECOMMENDATIONS\n")
+                f.write("-" * 40 + "\n")
+                
+                if top_source_count > total_leads * 0.4:
+                    f.write(f"• Consider diversifying traffic sources - {top_source} dominates ({(top_source_count/total_leads)*100:.1f}%)\n")
+                
+                if unknown_count > total_leads * 0.3:
+                    f.write(f"• Improve attribution tracking - {unknown_count} leads unattributed ({(unknown_count/total_leads)*100:.1f}%)\n")
+                
+                if low_confidence_count > high_confidence_count:
+                    f.write("• Enhance data quality - more low confidence than high confidence attributions\n")
+                
+                if self.use_gsc_data:
+                    f.write("• GSC integration enabled - consider expanding API data sources\n")
+                else:
+                    f.write("• Consider enabling Google Search Console integration for better SEO attribution\n")
+                
+                f.write("\n" + "="*70 + "\n")
+                f.write("End of Report\n")
+                f.write("="*70 + "\n")
+            
+            print_colored(f"✓ Text report saved to {output_path}", Colors.GREEN)
+            return True
+            
+        except Exception as e:
+            print_colored(f"Error generating text report: {e}", Colors.RED)
+            return False
+
+    def export_attribution_summary(self, output_path: str = "./output/attribution_summary.csv"):
+        """Export attribution summary statistics to CSV"""
+        try:
+            # Ensure output directory exists
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            
+            # Source counts and percentages
+            attribution_counts = self.leads_df['attributed_source'].value_counts()
+            total_leads = len(self.leads_df)
+            
+            summary_data = []
+            
+            for source, count in attribution_counts.items():
+                source_leads = self.leads_df[self.leads_df['attributed_source'] == source]
+                
+                # Calculate confidence statistics
+                confidence_scores = source_leads['attribution_confidence']
+                avg_confidence = confidence_scores.mean() if len(confidence_scores) > 0 else 0
+                min_confidence = confidence_scores.min() if len(confidence_scores) > 0 else 0
+                max_confidence = confidence_scores.max() if len(confidence_scores) > 0 else 0
+                
+                # High confidence percentage for this source
+                high_conf_count = len(source_leads[source_leads['attribution_confidence'] >= 80])
+                high_conf_pct = (high_conf_count / count * 100) if count > 0 else 0
+                
+                # Top products for this source
+                all_products = []
+                for _, lead in source_leads.iterrows():
+                    products = lead.get('product', '')
+                    if products:
+                        all_products.extend([p.strip() for p in str(products).split(';') if p.strip()])
+                
+                top_product = ""
+                top_product_count = 0
+                if all_products:
+                    product_counts = pd.Series(all_products).value_counts()
+                    top_product = product_counts.index[0] if len(product_counts) > 0 else ""
+                    top_product_count = product_counts.iloc[0] if len(product_counts) > 0 else 0
+                
+                summary_data.append({
+                    'source': source,
+                    'lead_count': count,
+                    'percentage': round((count / total_leads) * 100, 1),
+                    'avg_confidence': round(avg_confidence, 1),
+                    'min_confidence': round(min_confidence, 1),
+                    'max_confidence': round(max_confidence, 1),
+                    'high_confidence_count': high_conf_count,
+                    'high_confidence_percentage': round(high_conf_pct, 1),
+                    'top_product': top_product,
+                    'top_product_mentions': top_product_count
+                })
+            
+            # Create DataFrame and save
+            summary_df = pd.DataFrame(summary_data)
+            summary_df = summary_df.sort_values('lead_count', ascending=False)
+            summary_df.to_csv(output_path, index=False)
+            
+            print_colored(f"✓ Attribution summary saved to {output_path}", Colors.GREEN)
+            return True
+            
+        except Exception as e:
+            print_colored(f"Error exporting attribution summary: {e}", Colors.RED)
+            return False
+
+    def display_progress_bar(self, current: int, total: int, description: str = "Processing"):
+        """Display a simple text-based progress bar"""
+        if total == 0:
+            return
+            
+        percentage = (current / total) * 100
+        bar_length = 40
+        filled_length = int(bar_length * current // total)
+        
+        bar = '█' * filled_length + '-' * (bar_length - filled_length)
+        print(f"\r{description}: |{bar}| {current}/{total} ({percentage:.1f}%)", end='', flush=True)
+        
+        if current == total:
+            print()  # New line when complete
+
+    def display_key_insights(self):
+        """Display key insights to console with colored formatting"""
+        print_colored("\n=== KEY INSIGHTS ===", Colors.BOLD + Colors.BLUE)
+        
+        # Attribution breakdown
+        attribution_counts = self.leads_df['attributed_source'].value_counts()
+        total_leads = len(self.leads_df)
+        
+        if len(attribution_counts) > 0:
+            top_source = attribution_counts.index[0]
+            top_count = attribution_counts.iloc[0]
+            print_colored(f"🎯 Primary Traffic Source: {top_source} ({top_count} leads, {(top_count/total_leads)*100:.1f}%)", Colors.GREEN)
+        
+        # Attribution quality
+        high_conf_count = len(self.leads_df[self.leads_df['attribution_confidence'] >= 80])
+        medium_conf_count = len(self.leads_df[self.leads_df['attribution_confidence'] >= 50])
+        quality_score = ((high_conf_count + medium_conf_count) / total_leads) * 100
+        
+        quality_color = Colors.GREEN if quality_score >= 70 else Colors.YELLOW if quality_score >= 50 else Colors.RED
+        print_colored(f"📊 Attribution Quality: {quality_score:.1f}% medium+ confidence", quality_color)
+        
+        # Unknown attribution warning
+        unknown_count = attribution_counts.get('Unknown', 0)
+        if unknown_count > 0:
+            unknown_pct = (unknown_count / total_leads) * 100
+            if unknown_pct > 30:
+                print_colored(f"⚠️  High Unknown Attribution: {unknown_count} leads ({unknown_pct:.1f}%) - consider improving tracking", Colors.YELLOW)
+        
+        # Time patterns
+        if 'first_inquiry_timestamp' in self.leads_df.columns:
+            valid_timestamps = self.leads_df['first_inquiry_timestamp'].dropna()
+            if len(valid_timestamps) > 0:
+                business_hours = valid_timestamps.dt.hour.between(9, 17)
+                business_pct = (business_hours.sum() / len(valid_timestamps)) * 100
+                print_colored(f"🕒 Business Hours Activity: {business_pct:.1f}% of leads during 9-17h", Colors.BLUE)
+        
+        # Data source diversity
+        if 'data_source' in self.leads_df.columns:
+            data_sources = self.leads_df['data_source'].nunique()
+            print_colored(f"📈 Data Source Diversity: {data_sources} different attribution methods used", Colors.BLUE)
+        
+        print_colored("=" * 50, Colors.BLUE)
+
 def analyze_traffic_attribution(leads_path="./output/leads_with_products.csv",
                               seo_csv_path=None,
                               ppc_standard_path=None,
@@ -1021,7 +1309,8 @@ def analyze_traffic_attribution(leads_path="./output/leads_with_products.csv",
                               output_path="./output/leads_with_attribution.csv",
                               use_gsc_data=False,
                               gsc_client=None,
-                              compare_methods=False):
+                              compare_methods=False,
+                              generate_reports=True):
     """Main function to run traffic attribution analysis"""
     try:
         print_colored("=== Traffic Attribution Analysis ===", Colors.BOLD + Colors.BLUE)
@@ -1033,7 +1322,8 @@ def analyze_traffic_attribution(leads_path="./output/leads_with_products.csv",
             compare_methods=compare_methods
         )
         
-        # Load data
+        # Load data with progress
+        print_colored("Loading data sources...", Colors.BLUE)
         analyzer.load_data(
             leads_path=leads_path,
             seo_csv_path=seo_csv_path,
@@ -1041,15 +1331,44 @@ def analyze_traffic_attribution(leads_path="./output/leads_with_products.csv",
             ppc_dynamic_path=ppc_dynamic_path
         )
         
-        # Run attribution
+        # Run attribution with progress tracking
+        print_colored("Running attribution analysis...", Colors.BLUE)
+        total_leads = len(analyzer.leads_df)
+        
+        # Show progress for large datasets
+        if total_leads > 100:
+            print_colored(f"Processing {total_leads} leads...", Colors.BLUE)
+        
         attributed_leads = analyzer.run_attribution()
         
-        # Save results
+        # Save main results
+        print_colored("Saving results...", Colors.BLUE)
         success = analyzer.save_results(output_path)
         
         if success:
             print_colored(f"\n✓ Traffic attribution analysis completed successfully!", Colors.GREEN)
             print_colored(f"Results saved to: {output_path}", Colors.BLUE)
+            
+            # Generate reports if requested
+            if generate_reports:
+                print_colored("\nGenerating reports...", Colors.BLUE)
+                
+                # Progress tracking for report generation
+                analyzer.display_progress_bar(1, 3, "Text Report")
+                analyzer.generate_text_report()
+                
+                analyzer.display_progress_bar(2, 3, "Summary CSV")
+                analyzer.export_attribution_summary()
+                
+                analyzer.display_progress_bar(3, 3, "Complete")
+                
+                print_colored("\n✓ Reports generated successfully!", Colors.GREEN)
+                print_colored("  - Text report: ./output/attribution_report.txt", Colors.BLUE)
+                print_colored("  - Summary CSV: ./output/attribution_summary.csv", Colors.BLUE)
+            
+            # Display key insights
+            analyzer.display_key_insights()
+            
             return len(attributed_leads)
         else:
             print_colored("Traffic attribution analysis completed with errors", Colors.YELLOW)
