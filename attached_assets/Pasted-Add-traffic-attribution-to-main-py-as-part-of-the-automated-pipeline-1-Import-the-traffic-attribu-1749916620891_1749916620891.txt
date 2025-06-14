@@ -1,0 +1,82 @@
+Add traffic attribution to main.py as part of the automated pipeline:
+
+1. Import the traffic attribution module at the top:
+   from modules.traffic_attribution import analyze_traffic_attribution
+
+2. Add a new function to the pipeline:
+   def run_traffic_attribution():
+       print("\n" + "="*50)
+       print("STEP X: Running Traffic Attribution Analysis")
+       print("="*50)
+       
+       # Check if prerequisite file exists
+       if not os.path.exists("output/leads_with_products.csv"):
+           print("Warning: leads_with_products.csv not found. Skipping attribution.")
+           return False
+       
+       # Define data file paths (these should exist in the data/ directory)
+       seo_path = "data/Feb2025-SEO.csv"
+       ppc_standard_path = "data/When your ads showed Custom and Corporate Gifts and Lanyards.csv"
+       ppc_dynamic_path = "data/When your ads showed Dynamic Search Ads.csv"
+       
+       # Check if data files exist, use None if not found
+       if not os.path.exists(seo_path):
+           print(f"Warning: SEO data not found at {seo_path}")
+           seo_path = None
+       
+       if not os.path.exists(ppc_standard_path):
+           print(f"Warning: PPC standard data not found")
+           ppc_standard_path = None
+           
+       if not os.path.exists(ppc_dynamic_path):
+           print(f"Warning: PPC dynamic data not found")
+           ppc_dynamic_path = None
+       
+       # Run attribution
+       try:
+           result = analyze_traffic_attribution(
+               leads_path="output/leads_with_products.csv",
+               seo_csv_path=seo_path,
+               ppc_standard_path=ppc_standard_path,
+               ppc_dynamic_path=ppc_dynamic_path,
+               output_path="output/leads_with_attribution.csv"
+           )
+           
+           if result > 0:
+               print(f"✓ Successfully attributed {result} leads")
+               print("✓ Results saved to output/leads_with_attribution.csv")
+               return True
+           else:
+               print("✗ No leads were attributed")
+               return False
+               
+       except Exception as e:
+           print(f"✗ Error during attribution: {e}")
+           return False
+
+3. Add to the main execution flow:
+   - Find where the pipeline runs (likely in if __name__ == "__main__": section)
+   - Add run_traffic_attribution() after lead analysis completes
+   - Make it part of the sequential flow
+
+   Example:
+   if __name__ == "__main__":
+       print("Starting HubSpot Automation Pipeline...")
+       
+       # Existing steps...
+       success = run_lead_analysis()  # or whatever it's called
+       
+       if success:
+           # NEW: Run traffic attribution
+           run_traffic_attribution()
+       
+       # Continue with other steps...
+       
+       print("\nPipeline completed!")
+
+4. Ensure the pipeline continues even if attribution fails:
+   - Use try/except blocks
+   - Log warnings but don't stop execution
+   - The pipeline should be resilient
+
+This integrates traffic attribution as an automated step in your pipeline without any user interaction.
