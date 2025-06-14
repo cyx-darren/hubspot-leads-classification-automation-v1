@@ -69,28 +69,20 @@ class LeadAttributionAnalyzer:
                  seo_csv_path=None, 
                  ppc_standard_path=None, 
                  ppc_dynamic_path=None):
-        """Load all data sources using TrafficDataLoader"""
+        """Load all data sources"""
         print_colored("Loading data sources for attribution analysis...", Colors.BLUE)
 
-        # Import and use TrafficDataLoader
-        from modules.traffic_data_loader import TrafficDataLoader
-        
-        data_loader = TrafficDataLoader()
-        
-        # Load all data sources
-        data_sources_loaded = data_loader.load_all_data(
-            enriched_leads_path=leads_path,
-            seo_data_path=seo_csv_path,
-            ppc_standard_path=ppc_standard_path,
-            ppc_dynamic_path=ppc_dynamic_path
-        )
-        
-        # Set data from loader
-        self.leads_df = data_loader.enriched_leads_df
-        self.seo_keywords_df = data_loader.seo_data_df
-        self.ppc_standard_df = data_loader.ppc_standard_df
-        self.ppc_dynamic_df = data_loader.ppc_dynamic_df
-        
+        # Load leads data from lead_analyzer output
+        try:
+            self.leads_df = pd.read_csv(leads_path)
+            print_colored(f"✓ Loaded {len(self.leads_df)} leads from {leads_path}", Colors.GREEN)
+        except FileNotFoundError:
+            print_colored(f"Error: Leads file not found: {leads_path}", Colors.RED)
+            raise
+        except Exception as e:
+            print_colored(f"Error loading leads data: {e}", Colors.RED)
+            raise
+
         # Load customer data from QuickBooks
         try:
             self.customers_df = self.load_customers_from_quickbooks()
@@ -100,14 +92,27 @@ class LeadAttributionAnalyzer:
             # Create empty DataFrame as fallback
             self.customers_df = pd.DataFrame(columns=['email'])
 
-        # Create mock data if needed
-        if self.seo_keywords_df is None or self.seo_keywords_df.empty:
-            print_colored("Creating mock SEO data for analysis", Colors.YELLOW)
+        # Load SEO data if provided
+        if seo_csv_path and os.path.exists(seo_csv_path):
+            self.seo_keywords_df = self.load_seo_data_from_csv(seo_csv_path)
+            print_colored(f"✓ Loaded {len(self.seo_keywords_df)} SEO keywords", Colors.GREEN)
+        else:
+            print_colored("No SEO data provided - creating mock data for analysis", Colors.YELLOW)
             self.seo_keywords_df = self.create_mock_seo_data()
 
-        if self.ppc_standard_df is None:
+        # Load PPC data if provided
+        if ppc_standard_path and ppc_dynamic_path:
+            try:
+                self.ppc_standard_df = pd.read_csv(ppc_standard_path)
+                self.ppc_dynamic_df = pd.read_csv(ppc_dynamic_path)
+                print_colored(f"✓ Loaded PPC data: {len(self.ppc_standard_df)} standard + {len(self.ppc_dynamic_df)} dynamic records", Colors.GREEN)
+            except Exception as e:
+                print_colored(f"Warning: Could not load PPC data: {e}", Colors.YELLOW)
+                self.ppc_standard_df = pd.DataFrame()
+                self.ppc_dynamic_df = pd.DataFrame()
+        else:
+            print_colored("No PPC data provided - creating mock data for analysis", Colors.YELLOW)
             self.ppc_standard_df = pd.DataFrame()
-        if self.ppc_dynamic_df is None:
             self.ppc_dynamic_df = pd.DataFrame()
 
         # Process and clean the data
@@ -219,8 +224,8 @@ class LeadAttributionAnalyzer:
         self.process_ppc_data()
 
     def process_leads_data(self):
-        """Process enriched leads data from lead_analyzer output"""
-        print_colored("Processing enriched leads data from lead analyzer output...", Colors.BLUE)
+        """Process leads data from lead_analyzer output"""
+        print_colored("Processing leads data from lead analyzer output...", Colors.BLUE)
         
         # The leads_with_products.csv has these columns:
         # email, original_classification, original_reason, total_tickets_analyzed, 
@@ -247,31 +252,28 @@ class LeadAttributionAnalyzer:
             lambda row: self.extract_keywords_from_lead_data(row), axis=1
         )
 
-        # Initialize attribution columns (preserve existing data, add new columns)
-        if 'attributed_source' not in self.leads_df.columns:
-            self.leads_df['attributed_source'] = 'Unknown'
-        if 'attribution_confidence' not in self.leads_df.columns:
-            self.leads_df['attribution_confidence'] = 0
-        if 'attribution_detail' not in self.leads_df.columns:
-            self.leads_df['attribution_detail'] = ''
+        # Initialize attribution columns
+        self.leads_df['attributed_source'] = 'Unknown'
+        self.leads_df['attribution_confidence'] = 0
+        self.leads_df['attribution_detail'] = ''
 
         # Extract day of week and hour for temporal analysis
         self.leads_df['day_of_week'] = self.leads_df['first_inquiry_timestamp'].dt.day_name()
         self.leads_df['hour_of_day'] = self.leads_df['first_inquiry_timestamp'].dt.hour
 
-        # Extract product information (already available from lead_analyzer)
+        # Extract product information
         if 'products_mentioned' in self.leads_df.columns:
             self.leads_df['product'] = self.leads_df['products_mentioned'].fillna('')
         else:
             self.leads_df['product'] = ''
 
-        # Extract subject information (already available from lead_analyzer)
+        # Extract subject information
         if 'ticket_subjects' in self.leads_df.columns:
             self.leads_df['subject'] = self.leads_df['ticket_subjects'].fillna('')
         else:
             self.leads_df['subject'] = ''
 
-        print_colored("✓ Enriched leads data processed and ready for attribution", Colors.GREEN)
+        print_colored("✓ Leads data processed", Colors.GREEN)
 
     def parse_analysis_period_to_date(self, period_str: str) -> datetime.datetime:
         """Parse analysis period string to datetime"""
@@ -728,43 +730,14 @@ class LeadAttributionAnalyzer:
             print_colored(f"  {level}: {count} leads ({count/len(self.leads_df)*100:.1f}%)", Colors.GREEN)
 
     def save_results(self, output_path: str = "./output/leads_with_attribution.csv"):
-        """Save enhanced attribution results to CSV"""
+        """Save attribution results to CSV"""
         try:
             # Ensure output directory exists
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
             
-            # Select and order columns for final output
-            output_columns = [
-                # Original enriched lead data
-                'email', 'original_classification', 'original_reason', 
-                'total_tickets_analyzed', 'products_mentioned', 'ticket_subjects', 'analysis_period',
-                
-                # Attribution results  
-                'attributed_source', 'attribution_confidence', 'confidence_level', 'attribution_detail',
-                
-                # Additional analysis data
-                'extracted_keywords', 'day_of_week', 'hour_of_day', 'first_inquiry_timestamp'
-            ]
-            
-            # Only include columns that exist
-            available_columns = [col for col in output_columns if col in self.leads_df.columns]
-            output_df = self.leads_df[available_columns].copy()
-            
-            # Convert timestamp to string for CSV compatibility
-            if 'first_inquiry_timestamp' in output_df.columns:
-                output_df['first_inquiry_timestamp'] = output_df['first_inquiry_timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
-            
-            # Convert list columns to string
-            if 'extracted_keywords' in output_df.columns:
-                output_df['extracted_keywords'] = output_df['extracted_keywords'].apply(
-                    lambda x: '; '.join(x) if isinstance(x, list) else str(x)
-                )
-            
             # Save to CSV
-            output_df.to_csv(output_path, index=False)
-            print_colored(f"✓ Enhanced attribution results saved to {output_path}", Colors.GREEN)
-            print_colored(f"  Columns included: {len(available_columns)}", Colors.BLUE)
-            print_colored(f"  Records with attribution: {len(output_df[output_df['attributed_source'] != 'Unknown'])}", Colors.BLUE)
+            self.leads_df.to_csv(output_path, index=False)
+            print_colored(f"✓ Attribution results saved to {output_path}", Colors.GREEN)
             
             return True
         except Exception as e:
@@ -811,97 +784,3 @@ def analyze_traffic_attribution(leads_path="./output/leads_with_products.csv",
 
 if __name__ == "__main__":
     analyze_traffic_attribution()
-
-
-
-def run_attribution(enriched_leads_path="./output/leads_with_products.csv",
-                   output_path="./output/leads_with_attribution.csv",
-                   seo_data_path=None,
-                   ppc_standard_path=None,
-                   ppc_dynamic_path=None):
-    """
-    Main pipeline function to run traffic attribution analysis.
-    
-    This function:
-    1. Checks if enriched leads file exists
-    2. Loads all available data sources
-    3. Runs attribution analysis
-    4. Saves enhanced results with attribution data
-    
-    Args:
-        enriched_leads_path: Path to leads_with_products.csv from lead_analyzer
-        output_path: Output path for leads_with_attribution.csv
-        seo_data_path: Optional path to SEO keyword data
-        ppc_standard_path: Optional path to standard PPC data
-        ppc_dynamic_path: Optional path to dynamic PPC data
-    
-    Returns:
-        Number of leads processed, or 0 if failed
-    """
-    try:
-        print_colored("=== Traffic Attribution Pipeline ===", Colors.BOLD + Colors.BLUE)
-        
-        # Check if enriched leads file exists
-        if not os.path.exists(enriched_leads_path):
-            print_colored(f"Error: Enriched leads file not found: {enriched_leads_path}", Colors.RED)
-            print_colored("Please run lead_analyzer.py first to generate leads_with_products.csv", Colors.YELLOW)
-            return 0
-        
-        # Check available data files in /data directory
-        data_dir = "./data"
-        available_files = []
-        if os.path.exists(data_dir):
-            available_files = [f for f in os.listdir(data_dir) if f.endswith(('.csv', '.xlsx', '.xls'))]
-        
-        # Auto-detect data files if not provided
-        if not seo_data_path and available_files:
-            seo_candidates = [f for f in available_files if 'seo' in f.lower()]
-            if seo_candidates:
-                seo_data_path = os.path.join(data_dir, seo_candidates[0])
-                print_colored(f"Auto-detected SEO data: {seo_data_path}", Colors.BLUE)
-        
-        if not ppc_standard_path and available_files:
-            ppc_candidates = [f for f in available_files if 'corporate gifts' in f.lower() or 'lanyards' in f.lower()]
-            if ppc_candidates:
-                ppc_standard_path = os.path.join(data_dir, ppc_candidates[0])
-                print_colored(f"Auto-detected PPC standard data: {ppc_standard_path}", Colors.BLUE)
-        
-        if not ppc_dynamic_path and available_files:
-            dynamic_candidates = [f for f in available_files if 'dynamic' in f.lower()]
-            if dynamic_candidates:
-                ppc_dynamic_path = os.path.join(data_dir, dynamic_candidates[0])
-                print_colored(f"Auto-detected PPC dynamic data: {ppc_dynamic_path}", Colors.BLUE)
-        
-        # Initialize analyzer
-        analyzer = LeadAttributionAnalyzer()
-        
-        # Load data
-        analyzer.load_data(
-            leads_path=enriched_leads_path,
-            seo_csv_path=seo_data_path,
-            ppc_standard_path=ppc_standard_path,
-            ppc_dynamic_path=ppc_dynamic_path
-        )
-        
-        if analyzer.leads_df is None or analyzer.leads_df.empty:
-            print_colored("Error: No leads data loaded", Colors.RED)
-            return 0
-        
-        # Run attribution analysis
-        attributed_leads = analyzer.run_attribution()
-        
-        # Save enhanced results
-        success = analyzer.save_results(output_path)
-        
-        if success:
-            print_colored(f"\n✓ Traffic attribution pipeline completed successfully!", Colors.GREEN)
-            print_colored(f"Input: {enriched_leads_path} ({len(attributed_leads)} leads)", Colors.BLUE)
-            print_colored(f"Output: {output_path} (enhanced with attribution data)", Colors.BLUE)
-            return len(attributed_leads)
-        else:
-            print_colored("Traffic attribution pipeline completed with errors", Colors.YELLOW)
-            return 0
-            
-    except Exception as e:
-        print_colored(f"Error in traffic attribution pipeline: {e}", Colors.RED)
-        return 0

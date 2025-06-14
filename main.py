@@ -281,7 +281,7 @@ def run_traffic_attribution():
     print("-" * 50)
 
     try:
-        from modules.traffic_attribution import run_attribution
+        from modules import traffic_attribution
 
         # Check if leads_with_products.csv exists
         input_file = "./output/leads_with_products.csv"
@@ -289,9 +289,9 @@ def run_traffic_attribution():
             print_colored(f"Warning: {input_file} not found. Skipping traffic attribution.", "yellow")
             return 0
 
-        # Run traffic attribution pipeline
-        attributed_count = run_attribution(
-            enriched_leads_path="./output/leads_with_products.csv",
+        # Run traffic attribution analysis
+        attributed_count = traffic_attribution.analyze_traffic_attribution(
+            leads_path="./output/leads_with_products.csv",
             output_path="./output/leads_with_attribution.csv"
         )
 
