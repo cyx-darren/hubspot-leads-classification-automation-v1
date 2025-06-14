@@ -266,38 +266,45 @@ class LeadAttributionAnalyzer:
         # Convert timestamp columns to datetime objects
         if 'first_ticket_date' in self.leads_df.columns:
             # Parse first_ticket_date as primary timestamp
-            self.leads_df['first_inquiry_timestamp'] = pd.to_datetime(
+            self.leads_df['first_ticket_date'] = pd.to_datetime(
                 self.leads_df['first_ticket_date'], 
                 errors='coerce'
             )
-            print_colored(f"✓ Parsed first_ticket_date for {self.leads_df['first_inquiry_timestamp'].notna().sum()} leads", Colors.GREEN)
+            # Also create the first_inquiry_timestamp column for compatibility
+            self.leads_df['first_inquiry_timestamp'] = self.leads_df['first_ticket_date']
+            print_colored(f"✓ Parsed first_ticket_date for {self.leads_df['first_ticket_date'].notna().sum()} leads", Colors.GREEN)
         else:
             print_colored("Warning: No first_ticket_date column found - using current time", Colors.YELLOW)
-            self.leads_df['first_inquiry_timestamp'] = pd.Timestamp.now()
+            self.leads_df['first_ticket_date'] = pd.Timestamp.now()
+            self.leads_df['first_inquiry_timestamp'] = self.leads_df['first_ticket_date']
 
         # Parse additional timestamp columns for analysis
         if 'last_ticket_date' in self.leads_df.columns:
-            self.leads_df['last_ticket_timestamp'] = pd.to_datetime(
+            self.leads_df['last_ticket_date'] = pd.to_datetime(
                 self.leads_df['last_ticket_date'], 
                 errors='coerce'
             )
+            self.leads_df['last_ticket_timestamp'] = self.leads_df['last_ticket_date']
         
         if 'most_recent_update' in self.leads_df.columns:
-            self.leads_df['most_recent_update_timestamp'] = pd.to_datetime(
+            self.leads_df['most_recent_update'] = pd.to_datetime(
                 self.leads_df['most_recent_update'], 
                 errors='coerce'
             )
+            self.leads_df['most_recent_update_timestamp'] = self.leads_df['most_recent_update']
 
         # Handle leads with missing timestamps
-        missing_timestamps = self.leads_df['first_inquiry_timestamp'].isna().sum()
+        missing_timestamps = self.leads_df['first_ticket_date'].isna().sum()
         if missing_timestamps > 0:
             print_colored(f"Warning: {missing_timestamps} leads have missing first_ticket_date", Colors.YELLOW)
             # Use analysis_period as fallback for missing timestamps
             if 'analysis_period' in self.leads_df.columns:
-                fallback_mask = self.leads_df['first_inquiry_timestamp'].isna()
-                self.leads_df.loc[fallback_mask, 'first_inquiry_timestamp'] = self.leads_df.loc[fallback_mask, 'analysis_period'].apply(
+                fallback_mask = self.leads_df['first_ticket_date'].isna()
+                fallback_dates = self.leads_df.loc[fallback_mask, 'analysis_period'].apply(
                     self.parse_analysis_period_to_date
                 )
+                self.leads_df.loc[fallback_mask, 'first_ticket_date'] = pd.to_datetime(fallback_dates, errors='coerce')
+                self.leads_df.loc[fallback_mask, 'first_inquiry_timestamp'] = self.leads_df.loc[fallback_mask, 'first_ticket_date']
 
         # Extract keywords from products_mentioned and ticket_subjects
         self.leads_df['extracted_keywords'] = self.leads_df.apply(
@@ -318,14 +325,29 @@ class LeadAttributionAnalyzer:
             self.leads_df['api_confidence'] = 0
 
         # Extract day of week and hour for temporal analysis using real timestamps
-        valid_timestamp_mask = self.leads_df['first_inquiry_timestamp'].notna()
-        if valid_timestamp_mask.sum() > 0:
-            self.leads_df.loc[valid_timestamp_mask, 'day_of_week'] = self.leads_df.loc[valid_timestamp_mask, 'first_inquiry_timestamp'].dt.day_name()
-            self.leads_df.loc[valid_timestamp_mask, 'hour_of_day'] = self.leads_df.loc[valid_timestamp_mask, 'first_inquiry_timestamp'].dt.hour
+        try:
+            valid_timestamp_mask = self.leads_df['first_ticket_date'].notna()
+            if valid_timestamp_mask.sum() > 0:
+                self.leads_df.loc[valid_timestamp_mask, 'day_of_week'] = self.leads_df.loc[valid_timestamp_mask, 'first_ticket_date'].dt.day_name()
+                self.leads_df.loc[valid_timestamp_mask, 'hour_of_day'] = self.leads_df.loc[valid_timestamp_mask, 'first_ticket_date'].dt.hour
+            else:
+                print_colored("Warning: No valid timestamps found for temporal analysis", Colors.YELLOW)
+        except AttributeError as e:
+            print_colored(f"Warning: Could not extract temporal data: {e}", Colors.YELLOW)
+            # Initialize with default values
+            self.leads_df['day_of_week'] = 'Unknown'
+            self.leads_df['hour_of_day'] = 0
         
         # Fill missing temporal data
-        self.leads_df['day_of_week'] = self.leads_df['day_of_week'].fillna('Unknown')
-        self.leads_df['hour_of_day'] = self.leads_df['hour_of_day'].fillna(0)
+        if 'day_of_week' not in self.leads_df.columns:
+            self.leads_df['day_of_week'] = 'Unknown'
+        else:
+            self.leads_df['day_of_week'] = self.leads_df['day_of_week'].fillna('Unknown')
+        
+        if 'hour_of_day' not in self.leads_df.columns:
+            self.leads_df['hour_of_day'] = 0
+        else:
+            self.leads_df['hour_of_day'] = self.leads_df['hour_of_day'].fillna(0)
 
         # Extract product information directly
         if 'products_mentioned' in self.leads_df.columns:
@@ -340,22 +362,32 @@ class LeadAttributionAnalyzer:
             self.leads_df['subject'] = ''
 
         # Calculate ticket activity span for additional insights
-        if 'last_ticket_timestamp' in self.leads_df.columns:
-            both_timestamps_mask = (
-                self.leads_df['first_inquiry_timestamp'].notna() & 
-                self.leads_df['last_ticket_timestamp'].notna()
-            )
-            if both_timestamps_mask.sum() > 0:
-                self.leads_df.loc[both_timestamps_mask, 'ticket_span_days'] = (
-                    self.leads_df.loc[both_timestamps_mask, 'last_ticket_timestamp'] - 
-                    self.leads_df.loc[both_timestamps_mask, 'first_inquiry_timestamp']
-                ).dt.days
+        try:
+            if 'last_ticket_date' in self.leads_df.columns and 'first_ticket_date' in self.leads_df.columns:
+                both_timestamps_mask = (
+                    self.leads_df['first_ticket_date'].notna() & 
+                    self.leads_df['last_ticket_date'].notna()
+                )
+                if both_timestamps_mask.sum() > 0:
+                    self.leads_df.loc[both_timestamps_mask, 'ticket_span_days'] = (
+                        self.leads_df.loc[both_timestamps_mask, 'last_ticket_date'] - 
+                        self.leads_df.loc[both_timestamps_mask, 'first_ticket_date']
+                    ).dt.days
+        except Exception as e:
+            print_colored(f"Warning: Could not calculate ticket span: {e}", Colors.YELLOW)
 
         print_colored("✓ Leads data processed with real timestamp data", Colors.GREEN)
         
         # Debug information
-        timestamp_stats = self.leads_df['first_inquiry_timestamp'].describe()
-        print_colored(f"Timestamp range: {timestamp_stats['min']} to {timestamp_stats['max']}", Colors.BLUE)
+        try:
+            valid_timestamps = self.leads_df['first_ticket_date'].dropna()
+            if len(valid_timestamps) > 0:
+                timestamp_stats = valid_timestamps.describe()
+                print_colored(f"Timestamp range: {timestamp_stats['min']} to {timestamp_stats['max']}", Colors.BLUE)
+            else:
+                print_colored("No valid timestamps available for statistics", Colors.YELLOW)
+        except Exception as e:
+            print_colored(f"Warning: Could not generate timestamp statistics: {e}", Colors.YELLOW)
 
     def prepare_for_external_data_sources(self):
         """Prepare analyzer for external data sources like Google Search Console"""
@@ -485,8 +517,16 @@ class LeadAttributionAnalyzer:
 
         if frames_to_concat:
             self.combined_ppc_df = pd.concat(frames_to_concat).reset_index(drop=True)
-            self.combined_ppc_df['day_of_week'] = self.combined_ppc_df['date'].dt.day_name()
-            self.combined_ppc_df['hour_of_day'] = 0
+            
+            # Ensure date column is datetime
+            try:
+                self.combined_ppc_df['date'] = pd.to_datetime(self.combined_ppc_df['date'], errors='coerce')
+                self.combined_ppc_df['day_of_week'] = self.combined_ppc_df['date'].dt.day_name()
+                self.combined_ppc_df['hour_of_day'] = 0
+            except AttributeError as e:
+                print_colored(f"Warning: Could not process PPC dates: {e}", Colors.YELLOW)
+                self.combined_ppc_df['day_of_week'] = 'Unknown'
+                self.combined_ppc_df['hour_of_day'] = 0
         else:
             self.combined_ppc_df = pd.DataFrame()
 
@@ -907,51 +947,58 @@ class LeadAttributionAnalyzer:
                 inquiry_time = inquiry_time.tz_localize('UTC')
 
             # Check daily clusters
-            if inquiry_time.date() in busy_dates:
-                daily_cluster_count = date_counts.get(inquiry_time.date(), 0) - 1  # Exclude current lead
-                if daily_cluster_count > 0:
-                    daily_score = min(30, daily_cluster_count * 8)
-                    referral_score += daily_score
-                    referral_evidence.append(f"Daily cluster: {daily_cluster_count} other leads on {inquiry_time.date()}")
+            try:
+                inquiry_date = inquiry_time.date()
+                if inquiry_date in busy_dates:
+                    daily_cluster_count = date_counts.get(inquiry_date, 0) - 1  # Exclude current lead
+                    if daily_cluster_count > 0:
+                        daily_score = min(30, daily_cluster_count * 8)
+                        referral_score += daily_score
+                        referral_evidence.append(f"Daily cluster: {daily_cluster_count} other leads on {inquiry_date}")
+            except AttributeError:
+                pass  # Skip if timestamp processing fails
 
             # Check hourly clusters (more precise referral detection)
-            inquiry_hour = inquiry_time.floor('H')
-            if inquiry_hour in busy_hours:
+            try:
+                inquiry_hour = inquiry_time.floor('H')
+                if inquiry_hour in busy_hours:
                 # Define tighter time window for referral detection
-                time_window_start = inquiry_time - pd.Timedelta(hours=2)
-                time_window_end = inquiry_time + pd.Timedelta(hours=2)
+                    time_window_start = inquiry_time - pd.Timedelta(hours=2)
+                    time_window_end = inquiry_time + pd.Timedelta(hours=2)
 
-                # Find leads in the same time window
-                time_window_mask = (
-                    (self.leads_df['first_inquiry_timestamp'] >= time_window_start) &
-                    (self.leads_df['first_inquiry_timestamp'] <= time_window_end) &
-                    (self.leads_df.index != idx) &
-                    (self.leads_df['first_inquiry_timestamp'].notna())
-                )
-                
-                time_window_inquiries = self.leads_df[time_window_mask]
-                time_cluster_count = len(time_window_inquiries)
-                
-                if time_cluster_count > 0:
-                    # Higher score for tighter time clusters
-                    hourly_time_window_start = inquiry_time - pd.Timedelta(hours=1)
-                    hourly_time_window_end = inquiry_time + pd.Timedelta(hours=1)
-                    
-                    hourly_cluster_mask = (
-                        (time_window_inquiries['first_inquiry_timestamp'] >= hourly_time_window_start) &
-                        (time_window_inquiries['first_inquiry_timestamp'] <= hourly_time_window_end)
+                    # Find leads in the same time window
+                    time_window_mask = (
+                        (self.leads_df['first_ticket_date'] >= time_window_start) &
+                        (self.leads_df['first_ticket_date'] <= time_window_end) &
+                        (self.leads_df.index != idx) &
+                        (self.leads_df['first_ticket_date'].notna())
                     )
                     
-                    hourly_cluster_count = hourly_cluster_mask.sum()
+                    time_window_inquiries = self.leads_df[time_window_mask]
+                    time_cluster_count = len(time_window_inquiries)
                     
-                    if hourly_cluster_count > 0:
-                        time_score = min(50, hourly_cluster_count * 20)  # Higher score for tight clusters
-                        referral_evidence.append(f"Tight time cluster: {hourly_cluster_count} leads within 1 hour")
-                    else:
-                        time_score = min(35, time_cluster_count * 12)
-                        referral_evidence.append(f"Time cluster: {time_cluster_count} leads within 2 hours")
-                    
-                    referral_score += time_score
+                    if time_cluster_count > 0:
+                        # Higher score for tighter time clusters
+                        hourly_time_window_start = inquiry_time - pd.Timedelta(hours=1)
+                        hourly_time_window_end = inquiry_time + pd.Timedelta(hours=1)
+                        
+                        hourly_cluster_mask = (
+                            (time_window_inquiries['first_ticket_date'] >= hourly_time_window_start) &
+                            (time_window_inquiries['first_ticket_date'] <= hourly_time_window_end)
+                        )
+                        
+                        hourly_cluster_count = hourly_cluster_mask.sum()
+                        
+                        if hourly_cluster_count > 0:
+                            time_score = min(50, hourly_cluster_count * 20)  # Higher score for tight clusters
+                            referral_evidence.append(f"Tight time cluster: {hourly_cluster_count} leads within 1 hour")
+                        else:
+                            time_score = min(35, time_cluster_count * 12)
+                            referral_evidence.append(f"Time cluster: {time_cluster_count} leads within 2 hours")
+                        
+                        referral_score += time_score
+            except AttributeError:
+                pass  # Skip if timestamp processing fails
 
             # Additional referral indicators using ticket span data
             if 'ticket_span_days' in self.leads_df.columns and pd.notna(lead.get('ticket_span_days')):
