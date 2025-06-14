@@ -19,6 +19,9 @@ import pandas as pd
 import numpy as np
 from typing import List, Dict, Optional, Tuple
 
+# Import our data loader
+from .traffic_data_loader import TrafficDataLoader
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -69,7 +72,7 @@ class LeadAttributionAnalyzer:
                  seo_csv_path=None, 
                  ppc_standard_path=None, 
                  ppc_dynamic_path=None):
-        """Load all data sources"""
+        """Load all data sources using TrafficDataLoader"""
         print_colored("Loading data sources for attribution analysis...", Colors.BLUE)
 
         # Load leads data from lead_analyzer output
@@ -92,28 +95,35 @@ class LeadAttributionAnalyzer:
             # Create empty DataFrame as fallback
             self.customers_df = pd.DataFrame(columns=['email'])
 
-        # Load SEO data if provided
-        if seo_csv_path and os.path.exists(seo_csv_path):
-            self.seo_keywords_df = self.load_seo_data_from_csv(seo_csv_path)
-            print_colored(f"✓ Loaded {len(self.seo_keywords_df)} SEO keywords", Colors.GREEN)
-        else:
-            print_colored("No SEO data provided - creating mock data for analysis", Colors.YELLOW)
+        # Initialize traffic data loader
+        self.traffic_loader = TrafficDataLoader()
+        
+        # Load traffic data using the dedicated loader
+        traffic_data = self.traffic_loader.load_all_data(
+            seo_path=seo_csv_path,
+            ppc_standard_path=ppc_standard_path,
+            ppc_dynamic_path=ppc_dynamic_path
+        )
+        
+        # Assign loaded data to class attributes
+        self.seo_keywords_df = traffic_data['seo_data']
+        self.ppc_standard_df = traffic_data['ppc_standard_data']
+        self.ppc_dynamic_df = traffic_data['ppc_dynamic_data']
+        
+        # Create fallback data if nothing was loaded
+        if self.seo_keywords_df is None:
+            print_colored("Creating mock SEO data for analysis", Colors.YELLOW)
             self.seo_keywords_df = self.create_mock_seo_data()
-
-        # Load PPC data if provided
-        if ppc_standard_path and ppc_dynamic_path:
-            try:
-                self.ppc_standard_df = pd.read_csv(ppc_standard_path)
-                self.ppc_dynamic_df = pd.read_csv(ppc_dynamic_path)
-                print_colored(f"✓ Loaded PPC data: {len(self.ppc_standard_df)} standard + {len(self.ppc_dynamic_df)} dynamic records", Colors.GREEN)
-            except Exception as e:
-                print_colored(f"Warning: Could not load PPC data: {e}", Colors.YELLOW)
-                self.ppc_standard_df = pd.DataFrame()
-                self.ppc_dynamic_df = pd.DataFrame()
-        else:
-            print_colored("No PPC data provided - creating mock data for analysis", Colors.YELLOW)
+            
+        if self.ppc_standard_df is None:
             self.ppc_standard_df = pd.DataFrame()
+            
+        if self.ppc_dynamic_df is None:
             self.ppc_dynamic_df = pd.DataFrame()
+
+        # Show traffic data summary
+        summary = traffic_data['summary']
+        print_colored(f"✓ Traffic data summary: {summary['seo_keywords']} SEO, {summary['ppc_standard_keywords']} PPC standard, {summary['ppc_dynamic_targets']} PPC dynamic", Colors.BLUE)
 
         # Process and clean the data
         self.process_data()
