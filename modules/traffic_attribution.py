@@ -52,7 +52,7 @@ def print_colored(text: str, color: str):
     print(f"{color}{text}{Colors.ENDC}")
 
 class LeadAttributionAnalyzer:
-    def __init__(self):
+    def __init__(self, use_gsc_data=False, gsc_client=None, compare_methods=False):
         self.leads_df = None
         self.customers_df = None
         self.seo_keywords_df = None
@@ -66,6 +66,14 @@ class LeadAttributionAnalyzer:
             'medium': 50,
             'low': 20
         }
+        
+        # Google Search Console integration parameters
+        self.use_gsc_data = use_gsc_data
+        self.gsc_client = gsc_client
+        self.gsc_click_data = None
+        
+        # Comparison mode for testing different attribution methods
+        self.compare_methods = compare_methods
 
     def load_data(self, 
                  leads_path="./output/leads_with_products.csv", 
@@ -232,6 +240,9 @@ class LeadAttributionAnalyzer:
 
         # Process and combine PPC data
         self.process_ppc_data()
+        
+        # Prepare external data sources (GSC, etc.)
+        self.prepare_for_external_data_sources()
 
     def process_leads_data(self):
         """Process leads data from lead_analyzer output"""
@@ -297,6 +308,14 @@ class LeadAttributionAnalyzer:
         self.leads_df['attributed_source'] = 'Unknown'
         self.leads_df['attribution_confidence'] = 0
         self.leads_df['attribution_detail'] = ''
+        self.leads_df['data_source'] = 'unknown'
+        
+        # Initialize comparison columns if in comparison mode
+        if self.compare_methods:
+            self.leads_df['csv_attribution'] = 'Unknown'
+            self.leads_df['csv_confidence'] = 0
+            self.leads_df['api_attribution'] = 'Unknown'
+            self.leads_df['api_confidence'] = 0
 
         # Extract day of week and hour for temporal analysis using real timestamps
         valid_timestamp_mask = self.leads_df['first_inquiry_timestamp'].notna()
@@ -337,6 +356,39 @@ class LeadAttributionAnalyzer:
         # Debug information
         timestamp_stats = self.leads_df['first_inquiry_timestamp'].describe()
         print_colored(f"Timestamp range: {timestamp_stats['min']} to {timestamp_stats['max']}", Colors.BLUE)
+
+    def prepare_for_external_data_sources(self):
+        """Prepare analyzer for external data sources like Google Search Console"""
+        print_colored("Preparing for external data source integration...", Colors.BLUE)
+        
+        # Initialize Google Search Console data if enabled
+        if self.use_gsc_data and self.gsc_client:
+            print_colored("GSC integration enabled - loading click data", Colors.BLUE)
+            try:
+                self.gsc_click_data = self.get_gsc_click_data()
+                print_colored(f"✓ Loaded {len(self.gsc_click_data)} GSC click records", Colors.GREEN)
+            except Exception as e:
+                print_colored(f"Warning: Could not load GSC data: {e}", Colors.YELLOW)
+                self.gsc_click_data = pd.DataFrame()
+        else:
+            print_colored("GSC integration disabled - using CSV fallback", Colors.BLUE)
+            self.gsc_click_data = pd.DataFrame()
+
+    def get_gsc_click_data(self) -> pd.DataFrame:
+        """
+        Get click data from Google Search Console API
+        TODO: Implement GSC API integration in Phase 2
+        Returns empty DataFrame as placeholder
+        """
+        # TODO: Phase 2 - Implement Google Search Console API integration
+        # This method will:
+        # 1. Use self.gsc_client to authenticate with GSC API
+        # 2. Query search analytics for clicks, impressions, positions
+        # 3. Filter by date range matching lead timestamps
+        # 4. Return DataFrame with columns: ['date', 'query', 'clicks', 'impressions', 'position', 'page']
+        
+        print_colored("GSC API integration not yet implemented - returning empty DataFrame", Colors.YELLOW)
+        return pd.DataFrame(columns=['date', 'query', 'clicks', 'impressions', 'position', 'page'])
 
     def parse_analysis_period_to_date(self, period_str: str) -> datetime.datetime:
         """Parse analysis period string to datetime"""
@@ -531,18 +583,64 @@ class LeadAttributionAnalyzer:
         self.leads_df.loc[direct_mask, 'attributed_source'] = 'Direct'
         self.leads_df.loc[direct_mask, 'attribution_confidence'] = 100
         self.leads_df.loc[direct_mask, 'attribution_detail'] = 'Returning customer'
+        self.leads_df.loc[direct_mask, 'data_source'] = 'customer_db'
 
         direct_count = direct_mask.sum()
         print_colored(f"✓ Identified {direct_count} leads as direct traffic ({direct_count/len(self.leads_df)*100:.1f}%)", Colors.GREEN)
 
     def identify_seo_traffic(self):
-        """Identify traffic from SEO"""
+        """Identify traffic from SEO using GSC data first, then CSV fallback"""
         print_colored("Identifying SEO traffic...", Colors.BLUE)
 
-        if self.seo_keywords_df.empty:
+        # TODO: Phase 2 - Implement GSC-first attribution logic
+        # Check for GSC data first
+        if self.use_gsc_data and not self.gsc_click_data.empty:
+            print_colored("Using Google Search Console data for SEO attribution", Colors.BLUE)
+            seo_count = self._identify_seo_from_gsc()
+            self._update_data_source_for_seo('gsc_api')
+        elif not self.seo_keywords_df.empty:
+            print_colored("Using CSV data for SEO attribution", Colors.BLUE)
+            seo_count = self._identify_seo_from_csv()
+            self._update_data_source_for_seo('seo_csv')
+        else:
             print_colored("No SEO data available - skipping SEO attribution", Colors.YELLOW)
             return
 
+        # TODO: Phase 2 - If comparison mode is enabled, run both methods
+        if self.compare_methods and not self.seo_keywords_df.empty and not self.gsc_click_data.empty:
+            print_colored("Comparison mode: Running both CSV and GSC attribution methods", Colors.BLUE)
+            # Store current results as CSV method
+            csv_mask = self.leads_df['attributed_source'] == 'SEO'
+            self.leads_df.loc[csv_mask, 'csv_attribution'] = 'SEO'
+            self.leads_df.loc[csv_mask, 'csv_confidence'] = self.leads_df.loc[csv_mask, 'attribution_confidence']
+            
+            # Reset and run GSC method
+            self.leads_df.loc[csv_mask, 'attributed_source'] = 'Unknown'
+            self.leads_df.loc[csv_mask, 'attribution_confidence'] = 0
+            gsc_count = self._identify_seo_from_gsc()
+            
+            # Store GSC results
+            gsc_mask = self.leads_df['attributed_source'] == 'SEO'
+            self.leads_df.loc[gsc_mask, 'api_attribution'] = 'SEO'
+            self.leads_df.loc[gsc_mask, 'api_confidence'] = self.leads_df.loc[gsc_mask, 'attribution_confidence']
+
+    def _identify_seo_from_gsc(self) -> int:
+        """
+        Identify SEO traffic using Google Search Console data
+        TODO: Phase 2 - Implement GSC-based attribution
+        """
+        # TODO: Phase 2 - Implement GSC attribution logic
+        # This method will:
+        # 1. Match lead timestamps with GSC click data
+        # 2. Use actual click/impression data for confidence scoring
+        # 3. Match lead keywords with GSC query data
+        # 4. Use real position data from GSC instead of CSV estimates
+        
+        print_colored("GSC-based SEO attribution not yet implemented", Colors.YELLOW)
+        return 0
+
+    def _identify_seo_from_csv(self) -> int:
+        """Identify SEO traffic using CSV keyword data (current implementation)"""
         # Only consider leads not already attributed
         unattributed_mask = self.leads_df['attributed_source'] == 'Unknown'
         seo_count = 0
@@ -611,6 +709,17 @@ class LeadAttributionAnalyzer:
         unattributed_count = unattributed_mask.sum()
         if unattributed_count > 0:
             print_colored(f"✓ Identified {seo_count} leads as SEO traffic ({seo_count/unattributed_count*100:.1f}% of unattributed)", Colors.GREEN)
+        
+        return seo_count
+
+    def _update_data_source_for_seo(self, source_type: str):
+        """Update data_source field for SEO attributed leads"""
+        seo_mask = self.leads_df['attributed_source'] == 'SEO'
+        self.leads_df.loc[seo_mask, 'data_source'] = source_type
+        
+        # Update attribution detail to include data source
+        current_details = self.leads_df.loc[seo_mask, 'attribution_detail']
+        self.leads_df.loc[seo_mask, 'attribution_detail'] = current_details + f" (source: {source_type})"
 
     def identify_ppc_traffic(self):
         """Identify traffic from PPC campaigns using real timestamps"""
@@ -716,10 +825,11 @@ class LeadAttributionAnalyzer:
                 if confidence_score >= self.confidence_thresholds['low']:
                     self.leads_df.loc[idx, 'attributed_source'] = 'PPC'
                     self.leads_df.loc[idx, 'attribution_confidence'] = confidence_score
+                    self.leads_df.loc[idx, 'data_source'] = 'ppc_csv'
 
                     matched_kw_str = '; '.join([f"{l}-{p}" for l, p, s in matched_keywords[:3]])
                     min_hours = min(time_diffs) if time_diffs else 0
-                    detail = f"Keyword matches: {matched_kw_str}, Time gap: {min_hours:.1f}h, Proximity score: {time_proximity_score:.1f}%"
+                    detail = f"Keyword matches: {matched_kw_str}, Time gap: {min_hours:.1f}h, Proximity score: {time_proximity_score:.1f}% (source: ppc_csv)"
                     self.leads_df.loc[idx, 'attribution_detail'] = detail
 
                     ppc_count += 1
@@ -853,10 +963,11 @@ class LeadAttributionAnalyzer:
             if confidence_score >= self.confidence_thresholds['low']:
                 self.leads_df.loc[idx, 'attributed_source'] = 'Referral'
                 self.leads_df.loc[idx, 'attribution_confidence'] = confidence_score
+                self.leads_df.loc[idx, 'data_source'] = 'pattern'
                 
                 # Add timestamp info to referral details
                 timestamp_info = f"Inquiry at {inquiry_time.strftime('%Y-%m-%d %H:%M')}"
-                all_evidence = referral_evidence + [timestamp_info]
+                all_evidence = referral_evidence + [timestamp_info, "source: pattern"]
                 self.leads_df.loc[idx, 'attribution_detail'] = '; '.join(all_evidence)
 
                 referral_count += 1
@@ -907,13 +1018,20 @@ def analyze_traffic_attribution(leads_path="./output/leads_with_products.csv",
                               seo_csv_path=None,
                               ppc_standard_path=None,
                               ppc_dynamic_path=None,
-                              output_path="./output/leads_with_attribution.csv"):
+                              output_path="./output/leads_with_attribution.csv",
+                              use_gsc_data=False,
+                              gsc_client=None,
+                              compare_methods=False):
     """Main function to run traffic attribution analysis"""
     try:
         print_colored("=== Traffic Attribution Analysis ===", Colors.BOLD + Colors.BLUE)
         
         # Initialize analyzer
-        analyzer = LeadAttributionAnalyzer()
+        analyzer = LeadAttributionAnalyzer(
+            use_gsc_data=use_gsc_data,
+            gsc_client=gsc_client,
+            compare_methods=compare_methods
+        )
         
         # Load data
         analyzer.load_data(
