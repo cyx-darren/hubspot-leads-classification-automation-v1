@@ -611,7 +611,10 @@ def analyze_lead_products(email: str, product_catalog: List[Dict], start_date: d
         'product_mentions': [],
         'ticket_subjects': [],
         'conversation_snippets': [],
-        'analysis_period': f"{start_date.strftime('%B %Y')} - {end_date.strftime('%B %Y')}"
+        'analysis_period': f"{start_date.strftime('%B %Y')} - {end_date.strftime('%B %Y')}",
+        'first_ticket_date': None,
+        'last_ticket_date': None,
+        'most_recent_update': None
     }
     
     print(f"  DEBUG: Starting product analysis for {email}")
@@ -628,15 +631,31 @@ def analyze_lead_products(email: str, product_catalog: List[Dict], start_date: d
         return result
     
     all_product_mentions = []
+    ticket_dates = []
+    update_dates = []
     
     for i, ticket in enumerate(tickets):
         ticket_id = ticket.get('id')
         subject = ticket.get('subject') or ''
         description = ticket.get('description_text') or ''
+        created_at = ticket.get('created_at')
+        updated_at = ticket.get('updated_at')
         
         print(f"    DEBUG: Analyzing ticket {i+1}/{len(tickets)} - ID: {ticket_id}")
         print(f"    DEBUG: Subject: {subject}")
+        print(f"    DEBUG: Created: {created_at}, Updated: {updated_at}")
         print(f"    DEBUG: Available ticket fields: {list(ticket.keys())}")
+        
+        # Track timestamps
+        if created_at:
+            parsed_created = parse_ticket_date(created_at)
+            if parsed_created:
+                ticket_dates.append(parsed_created)
+        
+        if updated_at:
+            parsed_updated = parse_ticket_date(updated_at)
+            if parsed_updated:
+                update_dates.append(parsed_updated)
         
         # Check custom fields
         if 'custom_fields' in ticket:
@@ -702,6 +721,14 @@ def analyze_lead_products(email: str, product_catalog: List[Dict], start_date: d
         # Small delay to avoid rate limiting
         time.sleep(0.1)
     
+    # Process timestamps
+    if ticket_dates:
+        result['first_ticket_date'] = min(ticket_dates).strftime('%Y-%m-%d %H:%M:%S')
+        result['last_ticket_date'] = max(ticket_dates).strftime('%Y-%m-%d %H:%M:%S')
+    
+    if update_dates:
+        result['most_recent_update'] = max(update_dates).strftime('%Y-%m-%d %H:%M:%S')
+    
     # Group and simplify product mentions
     simplified_products = simplify_product_mentions(all_product_mentions)
     result['product_mentions'] = simplified_products
@@ -709,6 +736,7 @@ def analyze_lead_products(email: str, product_catalog: List[Dict], start_date: d
     print(f"  DEBUG: Final product analysis for {email}:")
     print(f"  DEBUG: Total product mentions found: {len(simplified_products)}")
     print(f"  DEBUG: Products: {simplified_products}")
+    print(f"  DEBUG: Timestamps - First: {result['first_ticket_date']}, Last: {result['last_ticket_date']}, Recent Update: {result['most_recent_update']}")
     
     return result
 
@@ -789,7 +817,10 @@ def analyze_leads(input_csv_path="./output/not_spam_leads.csv",
                 'total_tickets_analyzed': analysis['total_tickets'],
                 'products_mentioned': '; '.join(analysis['product_mentions']),
                 'ticket_subjects': '; '.join(analysis['ticket_subjects']),
-                'analysis_period': analysis['analysis_period']
+                'analysis_period': analysis['analysis_period'],
+                'first_ticket_date': analysis.get('first_ticket_date', ''),
+                'last_ticket_date': analysis.get('last_ticket_date', ''),
+                'most_recent_update': analysis.get('most_recent_update', '')
             }
             
             analyzed_leads.append(output_row)
@@ -811,7 +842,10 @@ def analyze_leads(input_csv_path="./output/not_spam_leads.csv",
                 'total_tickets_analyzed': 0,
                 'products_mentioned': f'Error: {str(e)}',
                 'ticket_subjects': '',
-                'analysis_period': f"{start_date.strftime('%B %Y')} - {end_date.strftime('%B %Y')}"
+                'analysis_period': f"{start_date.strftime('%B %Y')} - {end_date.strftime('%B %Y')}",
+                'first_ticket_date': '',
+                'last_ticket_date': '',
+                'most_recent_update': ''
             }
             analyzed_leads.append(output_row)
     
