@@ -873,6 +873,32 @@ class LeadAttributionAnalyzer:
         current_details = self.leads_df.loc[seo_mask, 'attribution_detail']
         self.leads_df.loc[seo_mask, 'attribution_detail'] = current_details + f" (source: {source_type})"
 
+    def match_ppc_keywords_only(self, lead_keywords, ppc_keywords=None):
+        """Match PPC keywords without time data - lower confidence"""
+        best_match_score = 0
+        matched_keywords = []
+        
+        for _, ppc_row in self.combined_ppc_df.iterrows():
+            if ppc_row['clicks'] == 0:
+                continue  # Skip keywords with no clicks
+                
+            ppc_keyword = str(ppc_row['keyword']).lower()
+            
+            for lead_kw in lead_keywords:
+                if FUZZY_AVAILABLE:
+                    similarity = fuzz.token_sort_ratio(lead_kw, ppc_keyword)
+                else:
+                    similarity = 100 if lead_kw == ppc_keyword else 0
+                
+                if similarity > 70:  # Higher threshold since no time validation
+                    best_match_score = max(best_match_score, similarity)
+                    matched_keywords.append((lead_kw, ppc_keyword, similarity))
+        
+        # Cap confidence at 60% since we can't verify timing
+        confidence = min(60, best_match_score * 0.6)
+        
+        return confidence, matched_keywords
+
     def identify_ppc_traffic(self):
         """Identify traffic from PPC campaigns"""
         print_colored("Identifying PPC traffic...", Colors.BLUE)
@@ -889,6 +915,7 @@ class LeadAttributionAnalyzer:
 
         if not has_valid_dates:
             print_colored("Note: PPC attribution using keyword matching only (no date data available)", Colors.YELLOW)
+            print_colored("Warning: PPC attribution confidence will be limited due to missing timestamp data", Colors.YELLOW)
         else:
             print_colored("PPC attribution using keyword matching with time verification", Colors.BLUE)
 
@@ -915,12 +942,13 @@ class LeadAttributionAnalyzer:
             if not lead_keywords:
                 continue
 
-            # Filter PPC data for time window if dates are available
-            ppc_data_to_check = self.combined_ppc_df.copy()
-            time_proximity_score = 50  # Default score when no time data
-            time_diffs = []
-
+            # Use different attribution methods based on data availability
             if has_valid_dates and pd.notna(lead.get('first_inquiry_timestamp')):
+                # Time-based attribution (existing logic)
+                ppc_data_to_check = self.combined_ppc_df.copy()
+                time_proximity_score = 50
+                time_diffs = []
+                
                 lead_time = lead['first_inquiry_timestamp']
                 
                 # Ensure lead_time is timezone-aware for comparison
@@ -929,7 +957,7 @@ class LeadAttributionAnalyzer:
 
                 # Define time window for attribution
                 time_window_start = lead_time - pd.Timedelta(hours=self.attribution_window_hours)
-                time_window_end = lead_time + pd.Timedelta(hours=2)  # Small buffer after lead time
+                time_window_end = lead_time + pd.Timedelta(hours=2)
                 
                 # Filter PPC data within time window
                 ppc_dates = pd.to_datetime(ppc_data_to_check['date'], errors='coerce')
@@ -975,46 +1003,58 @@ class LeadAttributionAnalyzer:
                         # No PPC activity in time window
                         continue
 
-            # Filter for campaigns with clicks
-            ppc_data_to_check = ppc_data_to_check[ppc_data_to_check['clicks'] > 0]
+                # Filter for campaigns with clicks
+                ppc_data_to_check = ppc_data_to_check[ppc_data_to_check['clicks'] > 0]
 
-            if ppc_data_to_check.empty:
-                continue
+                if ppc_data_to_check.empty:
+                    continue
 
-            # Match lead keywords with PPC keywords
-            keyword_match_score = 0
-            matched_keywords = []
+                # Match lead keywords with PPC keywords
+                keyword_match_score = 0
+                matched_keywords = []
 
-            for _, ppc_row in ppc_data_to_check.iterrows():
-                ppc_keyword = str(ppc_row['keyword']).lower()
-                ppc_keyword_terms = self.extract_keywords_from_text(ppc_keyword)
+                for _, ppc_row in ppc_data_to_check.iterrows():
+                    ppc_keyword = str(ppc_row['keyword']).lower()
+                    ppc_keyword_terms = self.extract_keywords_from_text(ppc_keyword)
 
-                for lead_kw in lead_keywords:
-                    for ppc_kw in ppc_keyword_terms:
-                        if FUZZY_AVAILABLE:
-                            similarity = fuzz.token_sort_ratio(lead_kw, ppc_kw)
-                        else:
-                            similarity = 100 if lead_kw == ppc_kw else 0
-                        
-                        if similarity > 60:
-                            # Boost score for exact matches
-                            if similarity == 100:
-                                keyword_match_score = max(keyword_match_score, similarity + 10)
+                    for lead_kw in lead_keywords:
+                        for ppc_kw in ppc_keyword_terms:
+                            if FUZZY_AVAILABLE:
+                                similarity = fuzz.token_sort_ratio(lead_kw, ppc_kw)
                             else:
-                                keyword_match_score = max(keyword_match_score, similarity)
-                            matched_keywords.append((lead_kw, ppc_kw, similarity))
+                                similarity = 100 if lead_kw == ppc_kw else 0
+                            
+                            if similarity > 60:
+                                # Boost score for exact matches
+                                if similarity == 100:
+                                    keyword_match_score = max(keyword_match_score, similarity + 10)
+                                else:
+                                    keyword_match_score = max(keyword_match_score, similarity)
+                                matched_keywords.append((lead_kw, ppc_kw, similarity))
 
-            # Calculate overall PPC confidence score
-            if keyword_match_score > 0:
-                if has_valid_dates and time_diffs:
-                    # Time-based attribution with higher confidence
+                # Calculate confidence score with time data
+                if keyword_match_score > 0:
                     confidence_score = (0.6 * keyword_match_score) + (0.4 * time_proximity_score)
-                else:
-                    # Keyword-only attribution with lower confidence
-                    confidence_score = keyword_match_score * 0.7  # Reduce confidence when no time data
+                    threshold = self.confidence_thresholds['low']
 
-                # Lower threshold for keyword-only matching
-                threshold = self.confidence_thresholds['low'] if has_valid_dates else self.confidence_thresholds['low'] * 0.8
+                    if confidence_score >= threshold:
+                        self.leads_df.loc[idx, 'attributed_source'] = 'PPC'
+                        self.leads_df.loc[idx, 'attribution_confidence'] = confidence_score
+                        self.leads_df.loc[idx, 'data_source'] = 'ppc_csv'
+
+                        matched_kw_str = '; '.join([f"{l}-{p}" for l, p, s in matched_keywords[:3]])
+                        min_hours = min(time_diffs)
+                        detail = f"Keyword matches: {matched_kw_str}, Time gap: {min_hours:.1f}h, Proximity score: {time_proximity_score:.1f}% (source: ppc_csv)"
+                        
+                        self.leads_df.loc[idx, 'attribution_detail'] = detail
+                        ppc_count += 1
+                        
+            else:
+                # Keyword-only attribution (no time data)
+                confidence_score, matched_keywords = self.match_ppc_keywords_only(lead_keywords)
+                
+                # Use lower threshold for keyword-only matching
+                threshold = self.confidence_thresholds['low'] * 0.8
 
                 if confidence_score >= threshold:
                     self.leads_df.loc[idx, 'attributed_source'] = 'PPC'
@@ -1022,12 +1062,7 @@ class LeadAttributionAnalyzer:
                     self.leads_df.loc[idx, 'data_source'] = 'ppc_csv'
 
                     matched_kw_str = '; '.join([f"{l}-{p}" for l, p, s in matched_keywords[:3]])
-                    
-                    if has_valid_dates and time_diffs:
-                        min_hours = min(time_diffs)
-                        detail = f"Keyword matches: {matched_kw_str}, Time gap: {min_hours:.1f}h, Proximity score: {time_proximity_score:.1f}% (source: ppc_csv)"
-                    else:
-                        detail = f"Keyword matches: {matched_kw_str} (keyword-only match, no time data) (source: ppc_csv)"
+                    detail = f"Keyword match only (no date data): {matched_kw_str} (source: ppc_csv)"
                     
                     self.leads_df.loc[idx, 'attribution_detail'] = detail
                     ppc_count += 1
@@ -1350,6 +1385,34 @@ class LeadAttributionAnalyzer:
                     weekday_count = len(valid_timestamps) - weekend_count
                     f.write(f"• Weekend vs Weekday: {weekend_count} weekend, {weekday_count} weekday leads\n")
                 
+                # Data limitations section
+                f.write("\n6. DATA LIMITATIONS\n")
+                f.write("-" * 40 + "\n")
+                
+                # Check for PPC attribution limitations
+                ppc_attributed_leads = self.leads_df[self.leads_df['attributed_source'] == 'PPC']
+                if len(ppc_attributed_leads) > 0:
+                    keyword_only_ppc = ppc_attributed_leads[
+                        ppc_attributed_leads['attribution_detail'].str.contains('keyword match only', na=False)
+                    ]
+                    if len(keyword_only_ppc) > 0:
+                        f.write(f"• PPC Attribution Limitation: {len(keyword_only_ppc)} PPC leads attributed using keyword matching only\n")
+                        f.write("  (No timestamp data available for time-based validation)\n")
+                        f.write(f"  Confidence capped at 60% for these attributions\n")
+                
+                # Check for missing timestamp data
+                missing_timestamps = self.leads_df['first_inquiry_timestamp'].isna().sum()
+                if missing_timestamps > 0:
+                    f.write(f"• Timestamp Data: {missing_timestamps} leads missing timestamp data\n")
+                    f.write("  This limits time-based attribution accuracy\n")
+                
+                # Check data source diversity
+                if 'data_source' in self.leads_df.columns:
+                    csv_only_sources = self.leads_df['data_source'].str.contains('csv', na=False).sum()
+                    if csv_only_sources > total_leads * 0.8:
+                        f.write("• Data Sources: Heavily reliant on CSV data sources\n")
+                        f.write("  Consider integrating live API data for real-time attribution\n")
+
                 # Recommendations
                 f.write("\n7. RECOMMENDATIONS\n")
                 f.write("-" * 40 + "\n")
@@ -1362,6 +1425,12 @@ class LeadAttributionAnalyzer:
                 
                 if low_confidence_count > high_confidence_count:
                     f.write("• Enhance data quality - more low confidence than high confidence attributions\n")
+                
+                # PPC-specific recommendations
+                if len(ppc_attributed_leads) > 0:
+                    keyword_only_pct = (len(keyword_only_ppc) / len(ppc_attributed_leads)) * 100 if len(ppc_attributed_leads) > 0 else 0
+                    if keyword_only_pct > 50:
+                        f.write("• Include timestamp data in PPC reports for better attribution accuracy\n")
                 
                 if self.use_gsc_data:
                     f.write("• GSC integration enabled - consider expanding API data sources\n")
