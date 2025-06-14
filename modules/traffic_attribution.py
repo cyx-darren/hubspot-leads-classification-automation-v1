@@ -504,37 +504,126 @@ class LeadAttributionAnalyzer:
             self.combined_ppc_df = pd.DataFrame()
             return
 
-        # Create mock PPC data if needed
-        if self.ppc_standard_df.empty:
-            self.ppc_standard_df = self.create_mock_ppc_data('Standard')
-        if self.ppc_dynamic_df.empty:
-            self.ppc_dynamic_df = self.create_mock_ppc_data('Dynamic')
+        frames_to_concat = []
+        has_date_data = False
+
+        # Process standard campaign data
+        if not self.ppc_standard_df.empty:
+            print_colored(f"   Processing PPC Standard data - columns: {list(self.ppc_standard_df.columns)}", Colors.BLUE)
+            
+            # Rename columns to standard names
+            standard_df = self.ppc_standard_df.copy()
+            standard_df = standard_df.rename(columns={
+                'Keyword': 'keyword',
+                'Clicks': 'clicks',
+                'Impr.': 'impressions'
+            })
+            
+            # Convert impressions from string to numeric (remove commas if present)
+            if 'impressions' in standard_df.columns:
+                standard_df['impressions'] = pd.to_numeric(
+                    standard_df['impressions'].astype(str).str.replace(',', ''), 
+                    errors='coerce'
+                ).fillna(0)
+            
+            # Convert clicks to numeric
+            if 'clicks' in standard_df.columns:
+                standard_df['clicks'] = pd.to_numeric(standard_df['clicks'], errors='coerce').fillna(0)
+            
+            # Add campaign type
+            standard_df['campaign_type'] = 'Standard'
+            
+            # Check if date column exists
+            if 'date' not in standard_df.columns:
+                print_colored("   Warning: PPC Standard data has no date column - time-based attribution disabled", Colors.YELLOW)
+                standard_df['date'] = pd.NaT  # Not a Time
+            else:
+                has_date_data = True
+                
+            frames_to_concat.append(standard_df)
+
+        # Process dynamic campaign data
+        if not self.ppc_dynamic_df.empty:
+            print_colored(f"   Processing PPC Dynamic data - columns: {list(self.ppc_dynamic_df.columns)}", Colors.BLUE)
+            
+            # Rename columns to standard names
+            dynamic_df = self.ppc_dynamic_df.copy()
+            dynamic_df = dynamic_df.rename(columns={
+                'Dynamic ad target': 'keyword',
+                'Clicks': 'clicks',
+                'Impr.': 'impressions'
+            })
+            
+            # Convert impressions from string to numeric (remove commas if present)
+            if 'impressions' in dynamic_df.columns:
+                dynamic_df['impressions'] = pd.to_numeric(
+                    dynamic_df['impressions'].astype(str).str.replace(',', ''), 
+                    errors='coerce'
+                ).fillna(0)
+            
+            # Convert clicks to numeric
+            if 'clicks' in dynamic_df.columns:
+                dynamic_df['clicks'] = pd.to_numeric(dynamic_df['clicks'], errors='coerce').fillna(0)
+            
+            # Add campaign type
+            dynamic_df['campaign_type'] = 'Dynamic'
+            
+            # Check if date column exists
+            if 'date' not in dynamic_df.columns:
+                print_colored("   Warning: PPC Dynamic data has no date column - time-based attribution disabled", Colors.YELLOW)
+                dynamic_df['date'] = pd.NaT  # Not a Time
+            else:
+                has_date_data = True
+                
+            frames_to_concat.append(dynamic_df)
 
         # Combine PPC data
-        common_columns = ['date', 'keyword', 'clicks', 'impressions', 'campaign_type']
-        
-        frames_to_concat = []
-        if not self.ppc_standard_df.empty:
-            frames_to_concat.append(self.ppc_standard_df[common_columns])
-        if not self.ppc_dynamic_df.empty:
-            frames_to_concat.append(self.ppc_dynamic_df[common_columns])
-
         if frames_to_concat:
-            self.combined_ppc_df = pd.concat(frames_to_concat).reset_index(drop=True)
+            # Define common columns (date might be NaT)
+            common_columns = ['keyword', 'clicks', 'impressions', 'campaign_type', 'date']
             
-            # Ensure date column is datetime
-            try:
-                self.combined_ppc_df['date'] = pd.to_datetime(self.combined_ppc_df['date'], errors='coerce')
-                self.combined_ppc_df['day_of_week'] = self.combined_ppc_df['date'].dt.day_name()
-                self.combined_ppc_df['hour_of_day'] = 0
-            except AttributeError as e:
-                print_colored(f"Warning: Could not process PPC dates: {e}", Colors.YELLOW)
+            # Ensure all DataFrames have the required columns
+            for df in frames_to_concat:
+                for col in common_columns:
+                    if col not in df.columns:
+                        if col == 'date':
+                            df[col] = pd.NaT
+                        else:
+                            df[col] = 0 if col in ['clicks', 'impressions'] else 'Unknown'
+            
+            self.combined_ppc_df = pd.concat([df[common_columns] for df in frames_to_concat]).reset_index(drop=True)
+            
+            # Process dates if available
+            if has_date_data:
+                try:
+                    self.combined_ppc_df['date'] = pd.to_datetime(self.combined_ppc_df['date'], errors='coerce')
+                    self.combined_ppc_df['day_of_week'] = self.combined_ppc_df['date'].dt.day_name()
+                    self.combined_ppc_df['hour_of_day'] = 0
+                    print_colored("✓ PPC data processed with date information", Colors.GREEN)
+                except Exception as e:
+                    print_colored(f"Warning: Could not process PPC dates: {e}", Colors.YELLOW)
+                    self.combined_ppc_df['day_of_week'] = 'Unknown'
+                    self.combined_ppc_df['hour_of_day'] = 0
+            else:
                 self.combined_ppc_df['day_of_week'] = 'Unknown'
                 self.combined_ppc_df['hour_of_day'] = 0
+                print_colored("✓ PPC data processed without date information", Colors.YELLOW)
         else:
             self.combined_ppc_df = pd.DataFrame()
 
-        print_colored("✓ PPC data processed", Colors.GREEN)
+        if not self.combined_ppc_df.empty:
+            # Clean keyword data
+            self.combined_ppc_df['keyword'] = self.combined_ppc_df['keyword'].astype(str).str.lower().str.strip()
+            
+            # Filter out rows with no clicks
+            before_filter = len(self.combined_ppc_df)
+            self.combined_ppc_df = self.combined_ppc_df[self.combined_ppc_df['clicks'] > 0]
+            after_filter = len(self.combined_ppc_df)
+            
+            if before_filter != after_filter:
+                print_colored(f"   Filtered out {before_filter - after_filter} PPC entries with zero clicks", Colors.BLUE)
+            
+            print_colored(f"✓ Final PPC dataset: {len(self.combined_ppc_df)} entries with clicks", Colors.GREEN)
 
     def create_mock_ppc_data(self, campaign_type: str) -> pd.DataFrame:
         """Create mock PPC data for testing"""
@@ -777,56 +866,119 @@ class LeadAttributionAnalyzer:
         self.leads_df.loc[seo_mask, 'attribution_detail'] = current_details + f" (source: {source_type})"
 
     def identify_ppc_traffic(self):
-        """Identify traffic from PPC campaigns using real timestamps"""
-        print_colored("Identifying PPC traffic with real timestamp matching...", Colors.BLUE)
+        """Identify traffic from PPC campaigns"""
+        print_colored("Identifying PPC traffic...", Colors.BLUE)
 
         if self.combined_ppc_df.empty:
             print_colored("No PPC data available - skipping PPC attribution", Colors.YELLOW)
             return
 
-        # Only consider leads not already attributed and with valid timestamps
-        unattributed_mask = (
-            (self.leads_df['attributed_source'] == 'Unknown') & 
-            (self.leads_df['first_inquiry_timestamp'].notna())
-        )
+        # Check if we have date data for time-based attribution
+        has_valid_dates = False
+        if 'date' in self.combined_ppc_df.columns:
+            valid_dates = pd.to_datetime(self.combined_ppc_df['date'], errors='coerce').notna()
+            has_valid_dates = valid_dates.any()
+
+        if not has_valid_dates:
+            print_colored("Note: PPC attribution using keyword matching only (no date data available)", Colors.YELLOW)
+        else:
+            print_colored("PPC attribution using keyword matching with time verification", Colors.BLUE)
+
+        # Only consider leads not already attributed
+        unattributed_mask = self.leads_df['attributed_source'] == 'Unknown'
+        
+        # If we have dates, also require valid timestamps on leads
+        if has_valid_dates:
+            unattributed_mask = unattributed_mask & self.leads_df['first_inquiry_timestamp'].notna()
+
         ppc_count = 0
 
         if unattributed_mask.sum() == 0:
-            print_colored("No unattributed leads with valid timestamps for PPC analysis", Colors.YELLOW)
+            if has_valid_dates:
+                print_colored("No unattributed leads with valid timestamps for PPC analysis", Colors.YELLOW)
+            else:
+                print_colored("No unattributed leads for PPC analysis", Colors.YELLOW)
             return
 
         # Loop through unattributed leads
         for idx, lead in self.leads_df[unattributed_mask].iterrows():
-            lead_time = lead['first_inquiry_timestamp']
             lead_keywords = lead.get('extracted_keywords', [])
             
             if not lead_keywords:
                 continue
 
-            # Ensure lead_time is timezone-aware for comparison
-            if lead_time.tz is None:
-                lead_time = lead_time.tz_localize('UTC')
+            # Filter PPC data for time window if dates are available
+            ppc_data_to_check = self.combined_ppc_df.copy()
+            time_proximity_score = 50  # Default score when no time data
+            time_diffs = []
 
-            # Define time window for attribution using real timestamps
-            time_window_start = lead_time - pd.Timedelta(hours=self.attribution_window_hours)
-            time_window_end = lead_time + pd.Timedelta(hours=2)  # Small buffer after lead time
-            
-            # Find PPC clicks within time window using proper datetime comparison
-            ppc_clicks_in_window = self.combined_ppc_df[
-                (pd.to_datetime(self.combined_ppc_df['date']) >= time_window_start.normalize()) & 
-                (pd.to_datetime(self.combined_ppc_df['date']) <= time_window_end.normalize()) & 
-                (self.combined_ppc_df['clicks'] > 0)
-            ]
+            if has_valid_dates and pd.notna(lead.get('first_inquiry_timestamp')):
+                lead_time = lead['first_inquiry_timestamp']
+                
+                # Ensure lead_time is timezone-aware for comparison
+                if lead_time.tz is None:
+                    lead_time = lead_time.tz_localize('UTC')
 
-            if ppc_clicks_in_window.empty:
+                # Define time window for attribution
+                time_window_start = lead_time - pd.Timedelta(hours=self.attribution_window_hours)
+                time_window_end = lead_time + pd.Timedelta(hours=2)  # Small buffer after lead time
+                
+                # Filter PPC data within time window
+                ppc_dates = pd.to_datetime(ppc_data_to_check['date'], errors='coerce')
+                valid_date_mask = ppc_dates.notna()
+                
+                if valid_date_mask.any():
+                    time_window_mask = (
+                        (ppc_dates >= time_window_start.normalize()) & 
+                        (ppc_dates <= time_window_end.normalize()) &
+                        valid_date_mask
+                    )
+                    
+                    if time_window_mask.any():
+                        ppc_data_to_check = ppc_data_to_check[time_window_mask]
+                        
+                        # Calculate time proximity score
+                        filtered_dates = ppc_dates[time_window_mask]
+                        for ppc_date in filtered_dates:
+                            if pd.notna(ppc_date):
+                                if ppc_date.tz is None:
+                                    ppc_date = ppc_date.tz_localize('UTC')
+                                
+                                time_diff_hours = abs((lead_time - ppc_date).total_seconds() / 3600)
+                                time_diffs.append(time_diff_hours)
+                        
+                        if time_diffs:
+                            min_hours_diff = min(time_diffs)
+                            
+                            # Score based on hours
+                            if min_hours_diff <= 1:
+                                time_proximity_score = 100
+                            elif min_hours_diff <= 6:
+                                time_proximity_score = 95
+                            elif min_hours_diff <= 12:
+                                time_proximity_score = 85
+                            elif min_hours_diff <= 24:
+                                time_proximity_score = 75
+                            elif min_hours_diff <= 48:
+                                time_proximity_score = 60
+                            else:
+                                time_proximity_score = max(0, 50 - (min_hours_diff - 48) / 24 * 10)
+                    else:
+                        # No PPC activity in time window
+                        continue
+
+            # Filter for campaigns with clicks
+            ppc_data_to_check = ppc_data_to_check[ppc_data_to_check['clicks'] > 0]
+
+            if ppc_data_to_check.empty:
                 continue
 
             # Match lead keywords with PPC keywords
             keyword_match_score = 0
             matched_keywords = []
 
-            for _, ppc_click in ppc_clicks_in_window.iterrows():
-                ppc_keyword = ppc_click['keyword'].lower()
+            for _, ppc_row in ppc_data_to_check.iterrows():
+                ppc_keyword = str(ppc_row['keyword']).lower()
                 ppc_keyword_terms = self.extract_keywords_from_text(ppc_keyword)
 
                 for lead_kw in lead_keywords:
@@ -837,61 +989,45 @@ class LeadAttributionAnalyzer:
                             similarity = 100 if lead_kw == ppc_kw else 0
                         
                         if similarity > 60:
-                            keyword_match_score = max(keyword_match_score, similarity)
+                            # Boost score for exact matches
+                            if similarity == 100:
+                                keyword_match_score = max(keyword_match_score, similarity + 10)
+                            else:
+                                keyword_match_score = max(keyword_match_score, similarity)
                             matched_keywords.append((lead_kw, ppc_kw, similarity))
 
-            # Calculate time proximity score using real timestamps
-            time_proximity_score = 0
-            if not ppc_clicks_in_window.empty:
-                # Calculate actual time differences in hours
-                ppc_clicks_in_window = ppc_clicks_in_window.copy()
-                ppc_dates = pd.to_datetime(ppc_clicks_in_window['date'])
-                
-                # Calculate time differences in hours
-                time_diffs = []
-                for ppc_date in ppc_dates:
-                    if ppc_date.tz is None:
-                        ppc_date = ppc_date.tz_localize('UTC')
-                    
-                    time_diff_hours = abs((lead_time - ppc_date).total_seconds() / 3600)
-                    time_diffs.append(time_diff_hours)
-                
-                if time_diffs:
-                    min_hours_diff = min(time_diffs)
-                    
-                    # Score based on hours rather than days for more precision
-                    if min_hours_diff <= 1:
-                        time_proximity_score = 100
-                    elif min_hours_diff <= 6:
-                        time_proximity_score = 95
-                    elif min_hours_diff <= 12:
-                        time_proximity_score = 85
-                    elif min_hours_diff <= 24:
-                        time_proximity_score = 75
-                    elif min_hours_diff <= 48:
-                        time_proximity_score = 60
-                    else:
-                        time_proximity_score = max(0, 50 - (min_hours_diff - 48) / 24 * 10)
-
             # Calculate overall PPC confidence score
-            if keyword_match_score > 0 and time_proximity_score > 0:
-                confidence_score = (0.6 * keyword_match_score) + (0.4 * time_proximity_score)
+            if keyword_match_score > 0:
+                if has_valid_dates and time_diffs:
+                    # Time-based attribution with higher confidence
+                    confidence_score = (0.6 * keyword_match_score) + (0.4 * time_proximity_score)
+                else:
+                    # Keyword-only attribution with lower confidence
+                    confidence_score = keyword_match_score * 0.7  # Reduce confidence when no time data
 
-                if confidence_score >= self.confidence_thresholds['low']:
+                # Lower threshold for keyword-only matching
+                threshold = self.confidence_thresholds['low'] if has_valid_dates else self.confidence_thresholds['low'] * 0.8
+
+                if confidence_score >= threshold:
                     self.leads_df.loc[idx, 'attributed_source'] = 'PPC'
                     self.leads_df.loc[idx, 'attribution_confidence'] = confidence_score
                     self.leads_df.loc[idx, 'data_source'] = 'ppc_csv'
 
                     matched_kw_str = '; '.join([f"{l}-{p}" for l, p, s in matched_keywords[:3]])
-                    min_hours = min(time_diffs) if time_diffs else 0
-                    detail = f"Keyword matches: {matched_kw_str}, Time gap: {min_hours:.1f}h, Proximity score: {time_proximity_score:.1f}% (source: ppc_csv)"
+                    
+                    if has_valid_dates and time_diffs:
+                        min_hours = min(time_diffs)
+                        detail = f"Keyword matches: {matched_kw_str}, Time gap: {min_hours:.1f}h, Proximity score: {time_proximity_score:.1f}% (source: ppc_csv)"
+                    else:
+                        detail = f"Keyword matches: {matched_kw_str} (keyword-only match, no time data) (source: ppc_csv)"
+                    
                     self.leads_df.loc[idx, 'attribution_detail'] = detail
-
                     ppc_count += 1
 
         unattributed_count = unattributed_mask.sum()
         if unattributed_count > 0:
-            print_colored(f"✓ Identified {ppc_count} leads as PPC traffic ({ppc_count/unattributed_count*100:.1f}% of unattributed)", Colors.GREEN)
+            attribution_method = "time-aware" if has_valid_dates else "keyword-only"
+            print_colored(f"✓ Identified {ppc_count} leads as PPC traffic using {attribution_method} matching ({ppc_count/unattributed_count*100:.1f}% of unattributed)", Colors.GREEN)
 
     def identify_referrals(self):
         """Identify potential referral traffic using real timestamps"""
