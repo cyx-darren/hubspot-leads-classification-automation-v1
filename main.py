@@ -1,4 +1,3 @@
-
 import glob
 from modules import spam_detector
 from modules import quickbooks_domain_updater
@@ -30,58 +29,58 @@ def find_leads_file():
         'leads*.csv',
         'Leads*.csv'
     ]
-    
+
     for pattern in patterns:
         files = glob.glob(pattern)
         if files:
             # Return the most recent file if multiple found
             return max(files, key=os.path.getmtime)
-    
+
     return None
 
 def check_required_files(leads_file):
     """Check if required files exist and show clear error messages"""
     print("Checking required files...")
-    
+
     missing_files = []
-    
+
     # Check for leads file
     if not leads_file or not os.path.exists(leads_file):
         missing_files.append("leads file")
         print_colored("✗ No leads file found", "red")
     else:
         print_colored(f"✓ Found leads file: {leads_file}", "green")
-    
+
     # Check for Unique_Email_Domains.csv
     if not os.path.exists('./data/Unique_Email_Domains.csv'):
         missing_files.append('./data/Unique_Email_Domains.csv')
         print_colored("✗ ./data/Unique_Email_Domains.csv not found", "red")
     else:
         print_colored("✓ ./data/Unique_Email_Domains.csv found", "green")
-    
+
     # Check for Product_Catalogue.csv (optional for lead analysis)
     if not os.path.exists('./data/Product_Catalogue.csv'):
         print_colored("⚠ ./data/Product_Catalogue.csv not found (optional for lead analysis)", "yellow")
     else:
         print_colored("✓ ./data/Product_Catalogue.csv found", "green")
-    
+
     if missing_files:
         print_colored("\nError: Missing required files:", "red")
         for file in missing_files:
             print_colored(f"  - {file}", "red")
-        
+
         if "leads file" in missing_files:
             print("\nPlease ensure you have a leads file:")
             print("  - Named like: leads.csv, leads_may2025.csv, leads_dec2024.csv, etc.")
             print("  - Located in ./data/ directory or root directory")
-        
+
         if './data/Unique_Email_Domains.csv' in missing_files:
             print("\nTo create ./data/Unique_Email_Domains.csv:")
             print("  1. Run QuickBooks domain updater separately, or")
             print("  2. Create the file manually with domain names (one per line)")
-        
+
         return False
-    
+
     return True
 
 def ask_user_continue():
@@ -99,11 +98,11 @@ def update_domains_with_error_handling():
     """Update domains from QuickBooks with comprehensive error handling"""
     print("Step 1: Checking for new customer domains...")
     print("-" * 50)
-    
+
     try:
         # Run QuickBooks domain updater
         exit_code = quickbooks_domain_updater.main()
-        
+
         if exit_code != 0:
             print_colored("\nWarning: QuickBooks domain update failed!", "yellow")
             print("This could be due to:")
@@ -113,15 +112,15 @@ def update_domains_with_error_handling():
             print("  - QuickBooks API rate limiting")
             print("  - Invalid credentials in Replit Secrets")
             print("\nTip: Use --skip-quickbooks flag to skip this step next time:")
-            
+
             if not ask_user_continue():
                 print_colored("Exiting as requested by user.", "yellow")
                 return False
-            
+
             print_colored("Continuing with existing whitelist...", "green")
         else:
             print_colored("✓ Domain update completed successfully!", "green")
-            
+
     except KeyboardInterrupt:
         print_colored("\nProcess interrupted by user.", "yellow")
         return False
@@ -131,26 +130,26 @@ def update_domains_with_error_handling():
         print("  - Missing or invalid API credentials")
         print("  - Network connectivity issues")
         print("  - QuickBooks service unavailability")
-        
+
         if not ask_user_continue():
             print_colored("Exiting as requested by user.", "yellow")
             return False
-        
+
         print_colored("Continuing with existing whitelist...", "green")
-    
+
     return True
 
 def run_spam_detection(leads_file):
     """Run spam detection with error handling"""
     print("\nStep 2: Running spam detection...")
     print("-" * 50)
-    
+
     try:
         # Create SpamDetector with filename for date detection
         # Extract just the filename for date parsing
         filename_for_parsing = os.path.basename(leads_file)
         detector = spam_detector.SpamDetector(filename=filename_for_parsing)
-        
+
         print_colored(f"\n=== Spam Detector with Dynamic Date Detection ===", spam_detector.Colors.BOLD + spam_detector.Colors.BLUE)
         print_colored(f"Analyzing tickets from {detector.start_date.strftime('%B %d, %Y')} to {detector.end_date.strftime('%B %d, %Y')}", spam_detector.Colors.BLUE)
 
@@ -176,7 +175,7 @@ def run_spam_detection(leads_file):
         # Read emails from the specified leads file
         print(f"Reading emails from {leads_file}...")
         emails_to_check = detector.read_emails_from_file(leads_file)
-        
+
         if emails_to_check:
             print_colored(f"Successfully loaded {len(emails_to_check)} emails to check", spam_detector.Colors.GREEN)
         else:
@@ -216,9 +215,9 @@ def run_spam_detection(leads_file):
         print(f"Total emails processed: {len(results)}")
         print(f"Spam emails detected: {spam_count}")
         print(f"Non-spam emails detected: {not_spam_count}")
-        
+
         return not_spam_count, spam_count, len(results), detector
-        
+
     except KeyboardInterrupt:
         print_colored("\nSpam detection interrupted by user.", "yellow")
         raise
@@ -233,21 +232,21 @@ def run_lead_analysis(start_date=None, end_date=None):
     """Run lead analysis on not_spam leads"""
     print("Step 3: Analyzing lead products and Freshdesk data...")
     print("-" * 50)
-    
+
     try:
         from modules import lead_analyzer
-        
+
         # Check if not_spam_leads.csv exists
         input_file = "./output/not_spam_leads.csv"
         if not os.path.exists(input_file):
             print_colored(f"Warning: {input_file} not found. Skipping lead analysis.", "yellow")
             return 0
-        
+
         # Check if Product_Catalogue.csv exists
         catalog_file = "./data/Product_Catalogue.csv"
         if not os.path.exists(catalog_file):
             print_colored(f"Warning: {catalog_file} not found. Analysis will be limited.", "yellow")
-        
+
         # Use the same date range as spam detector, or defaults if not provided
         success = lead_analyzer.analyze_leads(
             input_csv_path="./output/not_spam_leads.csv",
@@ -255,7 +254,7 @@ def run_lead_analysis(start_date=None, end_date=None):
             start_date=start_date,
             end_date=end_date
         )
-        
+
         if success:
             print_colored("✓ Lead analysis completed successfully!", "green")
             # Count analyzed leads
@@ -268,7 +267,7 @@ def run_lead_analysis(start_date=None, end_date=None):
         else:
             print_colored("✗ Lead analysis failed", "red")
             return 0
-            
+
     except ImportError as e:
         print_colored(f"Error importing lead analyzer: {e}", "red")
         return 0
@@ -276,44 +275,85 @@ def run_lead_analysis(start_date=None, end_date=None):
         print_colored(f"Error during lead analysis: {e}", "red")
         return 0
 
-def show_final_summary(not_spam_count, spam_count, total_processed, analyzed_leads_count=0, domains_updated=True, leads_file=""):
-    """Show final summary with results"""
-    print("\n" + "=" * 50)
-    print("Step 4: Final Summary")
+def run_traffic_attribution():
+    """Run traffic attribution analysis on leads with products"""
+    print("Step 4: Analyzing traffic attribution and lead sources...")
     print("-" * 50)
-    
+
+    try:
+        from modules import traffic_attribution
+
+        # Check if leads_with_products.csv exists
+        input_file = "./output/leads_with_products.csv"
+        if not os.path.exists(input_file):
+            print_colored(f"Warning: {input_file} not found. Skipping traffic attribution.", "yellow")
+            return 0
+
+        # Run traffic attribution analysis
+        attributed_count = traffic_attribution.analyze_traffic_attribution(
+            leads_path="./output/leads_with_products.csv",
+            output_path="./output/leads_with_attribution.csv"
+        )
+
+        if attributed_count > 0:
+            print_colored("✓ Traffic attribution analysis completed successfully!", "green")
+            return attributed_count
+        else:
+            print_colored("✗ Traffic attribution analysis failed", "red")
+            return 0
+
+    except ImportError as e:
+        print_colored(f"Error importing traffic attribution: {e}", "red")
+        return 0
+    except Exception as e:
+        print_colored(f"Error during traffic attribution: {e}", "red")
+        return 0
+
+def show_final_summary(not_spam_count, spam_count, total_processed, analyzed_leads_count, attributed_leads_count, domains_updated, leads_file):
+    """Show final workflow summary"""
+    print_colored("\n" + "=" * 60, "bold")
+    print_colored("🎉 HUBSPOT AUTOMATION v1 - WORKFLOW COMPLETE! 🎉", "bold")
+    print_colored("=" * 60, "bold")
+
+    print(f"\n📊 PROCESSING SUMMARY:")
+    print(f"   Input file: {leads_file}")
+    print(f"   Total leads processed: {total_processed}")
+    print(f"   ✅ Valid leads: {not_spam_count}")
+    print(f"   🚫 Spam leads filtered: {spam_count}")
+    print(f"   📈 Leads analyzed: {analyzed_leads_count}")
+    print(f"   🎯 Attribution completed: {attributed_leads_count}")
+
     if domains_updated:
-        print_colored("✓ Workflow completed successfully!", "green")
-    else:
-        print_colored("✓ Spam detection completed (domains not updated)", "yellow")
-    
-    print(f"📁 Input file: {leads_file}")
-    print(f"📧 Total emails processed: {total_processed}")
-    print_colored(f"✅ Not Spam: {not_spam_count} emails (saved to ./output/not_spam_leads.csv)", "green")
-    print_colored(f"🚫 Spam: {spam_count} emails (saved to ./output/spam_leads.csv)", "red")
-    
+        print(f"\n🔄 DOMAIN UPDATES:")
+        print(f"   ✅ QuickBooks domains refreshed")
+
+    print(f"\n📁 OUTPUT FILES GENERATED:")
+    print(f"   📋 Clean leads: ./output/not_spam_leads.csv ({not_spam_count} leads)")
+    print(f"   🗑️  Spam leads: ./output/spam_leads.csv ({spam_count} leads)")
     if analyzed_leads_count > 0:
-        print_colored(f"🔍 Analyzed Leads: {analyzed_leads_count} emails (saved to ./output/leads_with_products.csv)", "blue")
-    
-    # Calculate percentages
-    if total_processed > 0:
-        not_spam_percent = (not_spam_count / total_processed) * 100
-        spam_percent = (spam_count / total_processed) * 100
-        print(f"📊 Distribution: {not_spam_percent:.1f}% Not Spam, {spam_percent:.1f}% Spam")
-        
-        if analyzed_leads_count > 0:
-            analyzed_percent = (analyzed_leads_count / not_spam_count) * 100 if not_spam_count > 0 else 0
-            print(f"🔍 Lead Analysis: {analyzed_percent:.1f}% of not-spam leads analyzed")
-    
-    print("\n" + "=" * 50)
-    print_colored("🎉 Complete workflow finished!", "green")
-    
-    # Updated workflow steps
-    print_colored("\n📋 Workflow Completed:", "blue")
-    print("  ✓ Step 1: Updated domains from QuickBooks" if domains_updated else "  ⚠ Step 1: Skipped QuickBooks update")
-    print("  ✓ Step 2: Spam detection completed")
-    print(f"  ✓ Step 3: Lead analysis completed" if analyzed_leads_count > 0 else "  ⚠ Step 3: Lead analysis skipped/failed")
-    print(f"\n📤 Final output: ./output/leads_with_products.csv ({analyzed_leads_count} analyzed leads)" if analyzed_leads_count > 0 else f"\n📤 Final output: ./output/not_spam_leads.csv ({not_spam_count} clean leads)")
+        print(f"   🔍 Product analysis: ./output/leads_with_products.csv ({analyzed_leads_count} leads)")
+    if attributed_leads_count > 0:
+        print(f"   🎯 Traffic attribution: ./output/leads_with_attribution.csv ({attributed_leads_count} leads)")
+
+    print(f"\n🚀 NEXT STEPS:")
+    print(f"   1. Review the clean leads in ./output/not_spam_leads.csv")
+    if analyzed_leads_count > 0:
+        print(f"   2. Check product insights in ./output/leads_with_products.csv")
+    if attributed_leads_count > 0:
+        print(f"   3. Analyze traffic sources in ./output/leads_with_attribution.csv")
+    print(f"   4. Import clean leads to HubSpot (Module 3 - coming soon)")
+
+    print_colored("\n" + "=" * 60, "bold")
+    print_colored("✨ Ready for next automation module! ✨", "green")
+    print_colored("💡 Tip: Run again with --skip-quickbooks to save time", "blue")
+    print_colored("📧 Support: Check README.md for troubleshooting", "blue")
+    print_colored("=" * 60, "bold")
+
+    # Show file locations for easy access
+    print(f"\n📍 Quick access to your files:")
+    print(f"   Clean leads ready for import: ./output/not_spam_leads.csv ({not_spam_count} clean leads)")
+    if attributed_leads_count > 0:
+        print(f"   Full analysis with attribution: ./output/leads_with_attribution.csv ({attributed_leads_count} analyzed leads)")
 
 def main():
     # Parse command line arguments
@@ -322,9 +362,9 @@ def main():
                        help='Skip QuickBooks domain update and run spam detection only')
     parser.add_argument('--input', help='Input leads CSV file', default=None)
     args = parser.parse_args()
-    
+
     print_colored("=== HubSpot Automation v1 - Complete Workflow ===\n", "bold")
-    
+
     try:
         # Find leads file
         if args.input:
@@ -334,7 +374,7 @@ def main():
                 sys.exit(1)
         else:
             leads_file = find_leads_file()
-            
+
             if not leads_file:
                 print_colored("✗ No leads file found", "red")
                 print("\nPlease ensure you have a leads file:")
@@ -343,16 +383,16 @@ def main():
                 print("\nAlternatively, specify a file with --input:")
                 print("  python main.py --input your_leads_file.csv")
                 sys.exit(1)
-        
+
         # Check for required files
         if not check_required_files(leads_file):
             print_colored("\nCannot proceed without required files. Exiting.", "red")
             sys.exit(1)
-        
+
         print_colored("✓ All required files found\n", "green")
-        
+
         domains_updated = True
-        
+
         # Step 1: Update domains (unless skipped)
         if args.skip_quickbooks:
             print_colored("Skipping QuickBooks domain update (--skip-quickbooks flag used)", "yellow")
@@ -362,9 +402,9 @@ def main():
             if not update_domains_with_error_handling():
                 sys.exit(1)
             domains_updated = True
-        
+
         print("\n" + "=" * 50)
-        
+
         # Step 2: Run spam detection
         detector = None
         try:
@@ -375,9 +415,9 @@ def main():
         except Exception:
             print_colored("\nSpam detection failed. Exiting.", "red")
             sys.exit(1)
-        
+
         print("\n" + "=" * 50)
-        
+
         # Step 3: Run lead analysis with same date range as spam detector
         analyzed_leads_count = 0
         try:
@@ -390,10 +430,20 @@ def main():
             sys.exit(0)
         except Exception:
             print_colored("\nLead analysis failed, but continuing to summary.", "yellow")
-        
-        # Step 4: Show final summary
-        show_final_summary(not_spam_count, spam_count, total_processed, analyzed_leads_count, domains_updated, leads_file)
-        
+
+        # Step 4: Run traffic attribution
+        attributed_leads_count = 0
+        try:
+            attributed_leads_count = run_traffic_attribution()
+        except KeyboardInterrupt:
+            print_colored("\nWorkflow interrupted by user. Exiting.", "yellow")
+            sys.exit(0)
+        except Exception:
+            print_colored("\nTraffic attribution failed, but continuing to summary.", "yellow")
+
+        # Step 5: Show final summary
+        show_final_summary(not_spam_count, spam_count, total_processed, analyzed_leads_count, attributed_leads_count, domains_updated, leads_file)
+
     except KeyboardInterrupt:
         print_colored("\nWorkflow interrupted by user. Exiting.", "yellow")
         sys.exit(0)
