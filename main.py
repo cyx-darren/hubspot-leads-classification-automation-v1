@@ -277,29 +277,56 @@ def run_lead_analysis(start_date=None, end_date=None):
 
 def run_traffic_attribution():
     """Run traffic attribution analysis on leads with products"""
-    print("Step 4: Analyzing traffic attribution and lead sources...")
-    print("-" * 50)
+    print("\n" + "="*50)
+    print("STEP 4: Running Traffic Attribution Analysis")
+    print("="*50)
 
     try:
-        from modules import traffic_attribution
+        from modules.traffic_attribution import analyze_traffic_attribution
 
-        # Check if leads_with_products.csv exists
-        input_file = "./output/leads_with_products.csv"
-        if not os.path.exists(input_file):
-            print_colored(f"Warning: {input_file} not found. Skipping traffic attribution.", "yellow")
+        # Check if prerequisite file exists
+        if not os.path.exists("output/leads_with_products.csv"):
+            print_colored("Warning: leads_with_products.csv not found. Skipping attribution.", "yellow")
             return 0
 
-        # Run traffic attribution analysis
-        attributed_count = traffic_attribution.analyze_traffic_attribution(
-            leads_path="./output/leads_with_products.csv",
-            output_path="./output/leads_with_attribution.csv"
-        )
+        # Define data file paths (these should exist in the data/ directory)
+        seo_path = "data/Feb2025-SEO.csv"
+        ppc_standard_path = "data/When your ads showed Custom and Corporate Gifts and Lanyards (1).csv"
+        ppc_dynamic_path = "data/When your ads showed Dynamic Search Ads (1).csv"
 
-        if attributed_count > 0:
-            print_colored("✓ Traffic attribution analysis completed successfully!", "green")
-            return attributed_count
-        else:
-            print_colored("✗ Traffic attribution analysis failed", "red")
+        # Check if data files exist, use None if not found
+        if not os.path.exists(seo_path):
+            print_colored(f"Warning: SEO data not found at {seo_path}", "yellow")
+            seo_path = None
+
+        if not os.path.exists(ppc_standard_path):
+            print_colored(f"Warning: PPC standard data not found at {ppc_standard_path}", "yellow")
+            ppc_standard_path = None
+
+        if not os.path.exists(ppc_dynamic_path):
+            print_colored(f"Warning: PPC dynamic data not found at {ppc_dynamic_path}", "yellow")
+            ppc_dynamic_path = None
+
+        # Run attribution
+        try:
+            result = analyze_traffic_attribution(
+                leads_path="output/leads_with_products.csv",
+                seo_csv_path=seo_path,
+                ppc_standard_path=ppc_standard_path,
+                ppc_dynamic_path=ppc_dynamic_path,
+                output_path="output/leads_with_attribution.csv"
+            )
+
+            if result > 0:
+                print_colored(f"✓ Successfully attributed {result} leads", "green")
+                print_colored("✓ Results saved to output/leads_with_attribution.csv", "green")
+                return result
+            else:
+                print_colored("✗ No leads were attributed", "red")
+                return 0
+
+        except Exception as e:
+            print_colored(f"✗ Error during attribution: {e}", "red")
             return 0
 
     except ImportError as e:
