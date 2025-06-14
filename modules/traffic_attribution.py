@@ -184,19 +184,22 @@ class LeadAttributionAnalyzer:
         try:
             seo_df = pd.read_csv(file_path)
             
-            # Rename columns to match expected format if needed
-            if 'Keyphrase' in seo_df.columns and 'keyphrase' not in seo_df.columns:
-                seo_df = seo_df.rename(columns={'Keyphrase': 'keyphrase'})
+            # Your CSV has these exact columns: Keyphrase, Current Page, Current Position
+            # Rename to lowercase for consistency
+            seo_df = seo_df.rename(columns={
+                'Keyphrase': 'keyphrase',
+                'Current Page': 'current_page',
+                'Current Position': 'current_position'
+            })
             
-            if 'Current Position' in seo_df.columns:
-                seo_df = seo_df.rename(columns={'Current Position': 'current_position'})
-            
-            # Convert position to numeric
+            # Convert position to numeric (it's already integer but ensure)
             seo_df['current_position'] = pd.to_numeric(seo_df['current_position'], errors='coerce')
             seo_df['current_position'] = seo_df['current_position'].fillna(100)
             
             # Add product category based on keyphrase
             seo_df['product_category'] = seo_df['keyphrase'].apply(self.extract_product_category_from_keyword)
+            
+            print_colored(f"   ✓ Loaded {len(seo_df)} SEO keywords with positions", Colors.GREEN)
             
             return seo_df
             
@@ -813,12 +816,17 @@ class LeadAttributionAnalyzer:
                             similarity = 100 if lead_kw == seo_kw_term else 0
                         
                         if similarity > 60:
-                            # Higher score for better rankings
-                            position_bonus = max(0, 10 - seo_kw['current_position']) * 3
-                            adjusted_score = similarity + position_bonus
+                            # Higher score for better rankings (check column exists)
+                            if 'current_position' in seo_kw and pd.notna(seo_kw['current_position']):
+                                position_bonus = max(0, 10 - seo_kw['current_position']) * 3
+                                adjusted_score = similarity + position_bonus
+                                matched_positions.append(seo_kw['current_position'])
+                            else:
+                                adjusted_score = similarity
+                                matched_positions.append(50)  # Default position if missing
+                            
                             keyword_match_score = max(keyword_match_score, adjusted_score)
                             matched_keywords.append((lead_kw, seo_kw_term, similarity))
-                            matched_positions.append(seo_kw['current_position'])
 
             # Calculate overall SEO confidence score
             if keyword_match_score > 0:
