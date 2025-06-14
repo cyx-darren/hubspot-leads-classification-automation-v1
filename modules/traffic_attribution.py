@@ -118,8 +118,14 @@ class LeadAttributionAnalyzer:
         self.ppc_standard_df = traffic_data['ppc_standard_data']
         self.ppc_dynamic_df = traffic_data['ppc_dynamic_data']
         
+        # Debug SEO data assignment
+        if self.seo_keywords_df is not None:
+            print_colored(f"SEO data loaded from traffic_loader with columns: {list(self.seo_keywords_df.columns)}", Colors.BLUE)
+        else:
+            print_colored("SEO data is None from traffic_loader", Colors.YELLOW)
+        
         # Create fallback data if nothing was loaded
-        if self.seo_keywords_df is None:
+        if self.seo_keywords_df is None or self.seo_keywords_df.empty:
             print_colored("Creating mock SEO data for analysis", Colors.YELLOW)
             self.seo_keywords_df = self.create_mock_seo_data()
             
@@ -128,6 +134,14 @@ class LeadAttributionAnalyzer:
             
         if self.ppc_dynamic_df is None:
             self.ppc_dynamic_df = pd.DataFrame()
+            
+        # Final verification of SEO data structure
+        if not self.seo_keywords_df.empty:
+            print_colored(f"Final SEO DataFrame columns: {list(self.seo_keywords_df.columns)}", Colors.BLUE)
+            if 'keyphrase' not in self.seo_keywords_df.columns:
+                print_colored("CRITICAL ERROR: SEO data still missing 'keyphrase' column after all processing!", Colors.RED)
+            else:
+                print_colored(f"✓ SEO data verified with 'keyphrase' column present", Colors.GREEN)
 
         # Show traffic data summary
         summary = traffic_data['summary']
@@ -183,18 +197,31 @@ class LeadAttributionAnalyzer:
         """Load SEO keyword data from CSV file"""
         try:
             seo_df = pd.read_csv(file_path)
+            print(f"   Raw SEO columns before rename: {list(seo_df.columns)}")
             
-            # Your CSV has these exact columns: Keyphrase, Current Page, Current Position
-            # Rename to lowercase for consistency
-            seo_df = seo_df.rename(columns={
+            # Rename columns - ensure this actually happens
+            rename_dict = {
                 'Keyphrase': 'keyphrase',
                 'Current Page': 'current_page',
                 'Current Position': 'current_position'
-            })
+            }
+            
+            seo_df = seo_df.rename(columns=rename_dict)
+            print(f"   SEO columns after rename: {list(seo_df.columns)}")
+            
+            # Verify the rename worked
+            if 'keyphrase' not in seo_df.columns:
+                print(f"   ERROR: 'keyphrase' column still missing after rename!")
+                print(f"   Available columns: {list(seo_df.columns)}")
+                return pd.DataFrame()  # Return empty DataFrame
             
             # Convert position to numeric (it's already integer but ensure)
-            seo_df['current_position'] = pd.to_numeric(seo_df['current_position'], errors='coerce')
-            seo_df['current_position'] = seo_df['current_position'].fillna(100)
+            if 'current_position' in seo_df.columns:
+                seo_df['current_position'] = pd.to_numeric(seo_df['current_position'], errors='coerce')
+                seo_df['current_position'] = seo_df['current_position'].fillna(100)
+            else:
+                print(f"   Warning: 'current_position' column missing, using default value")
+                seo_df['current_position'] = 100
             
             # Add product category based on keyphrase
             seo_df['product_category'] = seo_df['keyphrase'].apply(self.extract_product_category_from_keyword)
@@ -204,7 +231,9 @@ class LeadAttributionAnalyzer:
             return seo_df
             
         except Exception as e:
-            print_colored(f"Error loading SEO data from CSV: {e}", Colors.RED)
+            print_colored(f"   Error in load_seo_data_from_csv: {e}", Colors.RED)
+            import traceback
+            traceback.print_exc()
             return pd.DataFrame()
 
     def create_mock_seo_data(self) -> pd.DataFrame:
@@ -229,6 +258,8 @@ class LeadAttributionAnalyzer:
         
         seo_df = pd.DataFrame(mock_keywords, columns=['keyphrase', 'current_position'])
         seo_df['product_category'] = seo_df['keyphrase'].apply(self.extract_product_category_from_keyword)
+        
+        print_colored(f"   ✓ Created mock SEO data with columns: {list(seo_df.columns)}", Colors.BLUE)
         
         return seo_df
 
@@ -768,19 +799,28 @@ class LeadAttributionAnalyzer:
         """Identify traffic from SEO using GSC data first, then CSV fallback"""
         print_colored("Identifying SEO traffic...", Colors.BLUE)
 
+        if self.seo_keywords_df.empty:
+            print_colored("No SEO data available - skipping SEO attribution", Colors.YELLOW)
+            return
+            
+        # Debug: Check columns
+        print(f"   SEO DataFrame columns: {list(self.seo_keywords_df.columns)}")
+        
+        if 'keyphrase' not in self.seo_keywords_df.columns:
+            print_colored("ERROR: 'keyphrase' column not found in SEO data!", Colors.RED)
+            print_colored(f"Available columns: {list(self.seo_keywords_df.columns)}", Colors.RED)
+            return
+
         # TODO: Phase 2 - Implement GSC-first attribution logic
         # Check for GSC data first
         if self.use_gsc_data and not self.gsc_click_data.empty:
             print_colored("Using Google Search Console data for SEO attribution", Colors.BLUE)
             seo_count = self._identify_seo_from_gsc()
             self._update_data_source_for_seo('gsc_api')
-        elif not self.seo_keywords_df.empty:
+        else:
             print_colored("Using CSV data for SEO attribution", Colors.BLUE)
             seo_count = self._identify_seo_from_csv()
             self._update_data_source_for_seo('seo_csv')
-        else:
-            print_colored("No SEO data available - skipping SEO attribution", Colors.YELLOW)
-            return
 
         # TODO: Phase 2 - If comparison mode is enabled, run both methods
         if self.compare_methods and not self.seo_keywords_df.empty and not self.gsc_click_data.empty:
@@ -817,6 +857,12 @@ class LeadAttributionAnalyzer:
 
     def _identify_seo_from_csv(self) -> int:
         """Identify SEO traffic using CSV keyword data (current implementation)"""
+        # Verify keyphrase column exists before processing
+        if 'keyphrase' not in self.seo_keywords_df.columns:
+            print_colored("ERROR: 'keyphrase' column missing in _identify_seo_from_csv", Colors.RED)
+            print_colored(f"Available columns: {list(self.seo_keywords_df.columns)}", Colors.RED)
+            return 0
+            
         # Only consider leads not already attributed
         unattributed_mask = self.leads_df['attributed_source'] == 'Unknown'
         seo_count = 0
@@ -834,7 +880,11 @@ class LeadAttributionAnalyzer:
             matched_positions = []
 
             for _, seo_kw in self.seo_keywords_df.iterrows():
-                seo_keyword = seo_kw['keyphrase'].lower()
+                # Check if keyphrase exists in this row
+                if 'keyphrase' not in seo_kw or pd.isna(seo_kw['keyphrase']):
+                    continue
+                    
+                seo_keyword = str(seo_kw['keyphrase']).lower()
                 seo_keyword_terms = self.extract_keywords_from_text(seo_keyword)
 
                 for lead_kw in lead_keywords:
