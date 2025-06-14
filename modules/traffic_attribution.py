@@ -799,6 +799,10 @@ class LeadAttributionAnalyzer:
         """Identify traffic from SEO using GSC data first, then CSV fallback"""
         print_colored("Identifying SEO traffic...", Colors.BLUE)
 
+        if self.seo_keywords_df is None:
+            print_colored("SEO data is None - skipping SEO attribution", Colors.YELLOW)
+            return
+            
         if self.seo_keywords_df.empty:
             print_colored("No SEO data available - skipping SEO attribution", Colors.YELLOW)
             return
@@ -806,8 +810,10 @@ class LeadAttributionAnalyzer:
         # Debug: Check columns
         print(f"   SEO DataFrame columns: {list(self.seo_keywords_df.columns)}")
         
-        if 'keyphrase' not in self.seo_keywords_df.columns:
-            print_colored("ERROR: 'keyphrase' column not found in SEO data!", Colors.RED)
+        # Check for either 'keyword' or 'keyphrase' column
+        keyword_column = 'keyword' if 'keyword' in self.seo_keywords_df.columns else 'keyphrase'
+        if keyword_column not in self.seo_keywords_df.columns:
+            print_colored("ERROR: Neither 'keyword' nor 'keyphrase' column found in SEO data!", Colors.RED)
             print_colored(f"Available columns: {list(self.seo_keywords_df.columns)}", Colors.RED)
             return
 
@@ -857,9 +863,13 @@ class LeadAttributionAnalyzer:
 
     def _identify_seo_from_csv(self) -> int:
         """Identify SEO traffic using CSV keyword data (current implementation)"""
-        # Verify keyphrase column exists before processing
-        if 'keyphrase' not in self.seo_keywords_df.columns:
-            print_colored("ERROR: 'keyphrase' column missing in _identify_seo_from_csv", Colors.RED)
+        # Use the actual column name returned by traffic_loader
+        keyword_column = 'keyword' if 'keyword' in self.seo_keywords_df.columns else 'keyphrase'
+        position_column = 'position' if 'position' in self.seo_keywords_df.columns else 'current_position'
+        
+        # Verify keyword column exists before processing
+        if keyword_column not in self.seo_keywords_df.columns:
+            print_colored(f"ERROR: Neither 'keyword' nor 'keyphrase' column found in SEO data", Colors.RED)
             print_colored(f"Available columns: {list(self.seo_keywords_df.columns)}", Colors.RED)
             return 0
             
@@ -880,32 +890,34 @@ class LeadAttributionAnalyzer:
             matched_positions = []
 
             for _, seo_kw in self.seo_keywords_df.iterrows():
-                # Check if keyphrase exists in this row
-                if 'keyphrase' not in seo_kw or pd.isna(seo_kw['keyphrase']):
-                    continue
-                    
-                seo_keyword = str(seo_kw['keyphrase']).lower()
-                seo_keyword_terms = self.extract_keywords_from_text(seo_keyword)
-
-                for lead_kw in lead_keywords:
-                    for seo_kw_term in seo_keyword_terms:
-                        if FUZZY_AVAILABLE:
-                            similarity = fuzz.token_sort_ratio(lead_kw, seo_kw_term)
-                        else:
-                            similarity = 100 if lead_kw == seo_kw_term else 0
+                try:
+                    # Use the actual column name
+                    if keyword_column not in seo_kw or pd.isna(seo_kw[keyword_column]):
+                        continue
                         
-                        if similarity > 60:
-                            # Higher score for better rankings (check column exists)
-                            if 'current_position' in seo_kw and pd.notna(seo_kw['current_position']):
-                                position_bonus = max(0, 10 - seo_kw['current_position']) * 3
-                                adjusted_score = similarity + position_bonus
-                                matched_positions.append(seo_kw['current_position'])
+                    seo_keyword = str(seo_kw[keyword_column]).lower()
+                    seo_keyword_terms = self.extract_keywords_from_text(seo_keyword)
+
+                    for lead_kw in lead_keywords:
+                        for seo_kw_term in seo_keyword_terms:
+                            if FUZZY_AVAILABLE:
+                                similarity = fuzz.token_sort_ratio(lead_kw, seo_kw_term)
                             else:
-                                adjusted_score = similarity
-                                matched_positions.append(50)  # Default position if missing
+                                similarity = 100 if lead_kw == seo_kw_term else 0
                             
-                            keyword_match_score = max(keyword_match_score, adjusted_score)
-                            matched_keywords.append((lead_kw, seo_kw_term, similarity))
+                            if similarity > 60:
+                                # Higher score for better rankings (check column exists)
+                                position = seo_kw[position_column] if position_column in seo_kw and pd.notna(seo_kw[position_column]) else 100
+                                position_bonus = max(0, 10 - position) * 3
+                                adjusted_score = similarity + position_bonus
+                                matched_positions.append(position)
+                                
+                                keyword_match_score = max(keyword_match_score, adjusted_score)
+                                matched_keywords.append((lead_kw, seo_kw_term, similarity))
+                                
+                except KeyError as e:
+                    print_colored(f"Warning: Column error in SEO data: {e}", Colors.YELLOW)
+                    continue
 
             # Calculate overall SEO confidence score
             if keyword_match_score > 0:
@@ -982,6 +994,11 @@ class LeadAttributionAnalyzer:
         """Identify traffic from PPC campaigns"""
         print_colored("Identifying PPC traffic...", Colors.BLUE)
 
+        # Add null check
+        if self.combined_ppc_df is None:
+            print_colored("PPC data is None - initializing as empty DataFrame", Colors.YELLOW)
+            self.combined_ppc_df = pd.DataFrame()
+        
         if self.combined_ppc_df.empty:
             print_colored("No PPC data available - skipping PPC attribution", Colors.YELLOW)
             return
@@ -1184,7 +1201,7 @@ class LeadAttributionAnalyzer:
             busy_dates = date_counts[date_counts > 2].index.tolist()
             
             # Also look for hourly clusters (more precise)
-            valid_timestamp_leads['inquiry_hour'] = valid_timestamp_leads['first_inquiry_timestamp'].dt.floor('H')
+            valid_timestamp_leads['inquiry_hour'] = valid_timestamp_leads['first_inquiry_timestamp'].dt.floor('h')
             hour_counts = valid_timestamp_leads['inquiry_hour'].value_counts()
             busy_hours = hour_counts[hour_counts > 1].index.tolist()
         else:
@@ -1226,7 +1243,7 @@ class LeadAttributionAnalyzer:
 
             # Check hourly clusters (more precise referral detection)
             try:
-                inquiry_hour = inquiry_time.floor('H')
+                inquiry_hour = inquiry_time.floor('h')
                 if inquiry_hour in busy_hours:
                 # Define tighter time window for referral detection
                     time_window_start = inquiry_time - pd.Timedelta(hours=2)
