@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 """
 Test script for Traffic Attribution Module
@@ -14,14 +13,14 @@ def test_gsc_integration():
     print("\n" + "="*60)
     print("TESTING GOOGLE SEARCH CONSOLE INTEGRATION")
     print("="*60)
-    
+
     # Check both file and environment
     creds_file = "data/gsc_credentials.json"
     creds_env = os.environ.get('GSC_CREDENTIALS')
     property_url = os.environ.get('GSC_PROPERTY_URL')
-    
+
     has_credentials = os.path.exists(creds_file) or bool(creds_env)
-    
+
     if not has_credentials:
         print("ℹ️  GSC credentials not found - skipping GSC tests")
         print("To enable GSC integration:")
@@ -30,28 +29,28 @@ def test_gsc_integration():
         print("     OR add GSC_CREDENTIALS to Replit Secrets")
         print("  3. Re-run tests")
         return False
-    
+
     # Found credentials
     if creds_env:
         print("✓ GSC credentials found in Replit Secrets")
     else:
         print("✓ GSC credentials found in file")
-    
+
     if not property_url:
         print("⚠️  GSC_PROPERTY_URL not set in environment")
         print("  Add your website URL to Replit Secrets as GSC_PROPERTY_URL")
         return False
     print(f"✓ GSC property URL: {property_url}")
-    
+
     # Test actual connection
     try:
         from modules.gsc_client import GoogleSearchConsoleClient
         from datetime import datetime, timedelta
-        
+
         print("\nTesting GSC connection...")
         client = GoogleSearchConsoleClient()
         auth_success = client.authenticate(property_url)
-        
+
         if not auth_success:
             print("✗ GSC authentication failed")
             print("Check:")
@@ -59,45 +58,45 @@ def test_gsc_integration():
             print("  - Property URL format (https://example.com/)")
             print("  - API permissions in Google Cloud Console")
             return False
-        
+
         print("✓ GSC authentication successful")
-        
+
         # Test connection
         print("\nTesting connection...")
         connection_success = client.test_connection()
-        
+
         if not connection_success:
             print("✗ GSC connection test failed")
             return False
-        
+
         print("✓ GSC connection test passed")
-        
+
         # Get sample data
         print("\nFetching sample data...")
         end_date = datetime.now()
         start_date = end_date - timedelta(days=7)
-        
+
         data = client.get_search_queries(start_date, end_date, limit=5)
-        
+
         if data is None:
             print("⚠️  Could not retrieve GSC data")
             return False
-        
+
         print(f"✓ Successfully connected to GSC!")
         print(f"✓ Retrieved {len(data)} search queries")
-        
+
         if not data.empty:
             print("\nSample queries with clicks:")
             for _, row in data.head(3).iterrows():
                 print(f"  - '{row['query']}': {row['clicks']} clicks, position {row['position']:.1f}")
-            
+
             total_clicks = data['clicks'].sum()
             print(f"\nTotal clicks from sample: {total_clicks}")
         else:
             print("⚠️  No recent data available (normal for new properties)")
-        
+
         return True
-        
+
     except ImportError:
         print("✗ GSC client module not available")
         print("Google API libraries may not be installed")
@@ -106,11 +105,73 @@ def test_gsc_integration():
         print(f"✗ GSC connection test failed: {e}")
         return False
 
+def test_ga4_connection():
+    """Test GA4 connection and show sample data"""
+    print("\n" + "="*60)
+    print("TESTING GOOGLE ANALYTICS 4 INTEGRATION")
+    print("="*60)
+
+    # Check GA4 configuration
+    ga4_creds = os.environ.get('GA4_CREDENTIALS')
+    gsc_creds = os.environ.get('GSC_CREDENTIALS')  # Fallback
+    property_id = os.environ.get('GA4_PROPERTY_ID')
+
+    has_credentials = bool(ga4_creds or gsc_creds)
+
+    if not has_credentials:
+        print("ℹ️  GA4 credentials not found - skipping GA4 tests")
+        print("To enable GA4 integration:")
+        print("  1. Add GA4_CREDENTIALS to Replit Secrets")
+        print("  2. Add GA4_PROPERTY_ID to Replit Secrets")
+        print("  3. Re-run tests")
+        return False
+
+    if not property_id:
+        print("⚠️  GA4_PROPERTY_ID not set in environment")
+        print("  Add your GA4 property ID to Replit Secrets")
+        return False
+
+    print(f"✓ GA4 property ID: {property_id}")
+
+    try:
+        from modules.ga4_client import GoogleAnalytics4Client
+        from datetime import datetime, timedelta
+
+        print("\nTesting GA4 connection...")
+        client = GoogleAnalytics4Client()
+        client.authenticate()
+
+        # Get last 7 days of data
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=7)
+
+        traffic = client.get_traffic_by_source(start_date, end_date)
+
+        print(f"✓ GA4 connection successful!")
+        print(f"✓ Retrieved {len(traffic)} traffic records")
+
+        if not traffic.empty:
+            print("\nTop traffic sources:")
+            top_sources = traffic.groupby(['source', 'medium'])['sessions'].sum().nlargest(5)
+            for (source, medium), sessions in top_sources.items():
+                print(f"  - {source}/{medium}: {sessions} sessions")
+
+            total_sessions = traffic['sessions'].sum()
+            print(f"\nTotal sessions: {total_sessions}")
+        else:
+            print("No traffic data available for the period")
+
+        return True
+
+    except Exception as e:
+        print(f"\n✗ GA4 connection test failed: {e}")
+        return False
+
 def test_attribution():
     print("="*60)
     print("TESTING TRAFFIC ATTRIBUTION MODULE")
     print("="*60)
-    
+
     # Check if required files exist
     files_to_check = {
         "Leads data": "output/leads_with_products.csv",
@@ -118,7 +179,7 @@ def test_attribution():
         "PPC Standard": "data/When your ads showed Custom and Corporate Gifts and Lanyards (1).csv",
         "PPC Dynamic": "data/When your ads showed Dynamic Search Ads (1).csv"
     }
-    
+
     print("\n1. CHECKING REQUIRED FILES:")
     print("-" * 40)
     missing_files = []
@@ -141,12 +202,12 @@ def test_attribution():
     try:
         # Check if GSC is available
         use_gsc = bool(os.environ.get('GSC_CREDENTIALS')) and bool(os.environ.get('GSC_PROPERTY_URL'))
-        
+
         if use_gsc:
             print("✓ GSC integration enabled for enhanced attribution")
         else:
             print("ℹ️  Using CSV data only (GSC not configured)")
-        
+
         result = analyze_traffic_attribution(
             leads_path="output/leads_with_products.csv",
             seo_csv_path="data/Feb2025-SEO.csv",
@@ -156,9 +217,9 @@ def test_attribution():
             use_gsc=use_gsc,
             generate_reports=True
         )
-        
+
         print(f"\n✓ Attribution analysis completed: {result} leads processed")
-        
+
     except Exception as e:
         print(f"\n✗ Error during attribution analysis: {e}")
         return False
@@ -166,35 +227,35 @@ def test_attribution():
     # Check output
     print("\n3. CHECKING OUTPUT:")
     print("-" * 40)
-    
+
     output_files = [
         "output/leads_with_attribution.csv",
         "output/attribution_report.txt",
         "output/attribution_summary.csv"
     ]
-    
+
     for output_file in output_files:
         if os.path.exists(output_file):
             print(f"   ✓ {output_file} created")
         else:
             print(f"   ✗ {output_file} missing")
-    
+
     # Analyze main output file
     if os.path.exists("output/leads_with_attribution.csv"):
         try:
             df = pd.read_csv("output/leads_with_attribution.csv")
-            
+
             print(f"\n4. ATTRIBUTION RESULTS ANALYSIS:")
             print("-" * 40)
             print(f"   Total leads processed: {len(df)}")
-            
+
             # Attribution Summary
             attribution_counts = df['attributed_source'].value_counts()
             print(f"\n   Attribution Breakdown:")
             for source, count in attribution_counts.items():
                 percentage = (count / len(df)) * 100
                 print(f"     {source}: {count} leads ({percentage:.1f}%)")
-            
+
             # Confidence Levels
             if 'confidence_level' in df.columns:
                 confidence_counts = df['confidence_level'].value_counts()
@@ -202,7 +263,7 @@ def test_attribution():
                 for level, count in confidence_counts.items():
                     percentage = (count / len(df)) * 100
                     print(f"     {level}: {count} leads ({percentage:.1f}%)")
-            
+
             # Data Source Breakdown
             if 'data_source' in df.columns:
                 source_counts = df['data_source'].value_counts()
@@ -210,15 +271,15 @@ def test_attribution():
                 for source, count in source_counts.items():
                     percentage = (count / len(df)) * 100
                     print(f"     {source}: {count} leads ({percentage:.1f}%)")
-            
+
             # Show sample attributions
             print(f"\n5. SAMPLE ATTRIBUTIONS:")
             print("-" * 40)
-            
+
             for source in df['attributed_source'].unique():
                 if source == 'Unknown':
                     continue
-                    
+
                 sample = df[df['attributed_source'] == source].head(1)
                 if not sample.empty:
                     row = sample.iloc[0]
@@ -228,37 +289,37 @@ def test_attribution():
                     if 'attribution_detail' in row:
                         detail = str(row['attribution_detail'])
                         print(f"     Detail: {detail[:80]}{'...' if len(detail) > 80 else ''}")
-            
+
             # Check for high confidence attributions
             if 'attribution_confidence' in df.columns:
                 high_conf = df[df['attribution_confidence'] >= 80]
                 medium_conf = df[(df['attribution_confidence'] >= 50) & (df['attribution_confidence'] < 80)]
                 low_conf = df[(df['attribution_confidence'] >= 20) & (df['attribution_confidence'] < 50)]
-                
+
                 print(f"\n6. QUALITY ASSESSMENT:")
                 print("-" * 40)
                 print(f"   High confidence (≥80%): {len(high_conf)} leads")
                 print(f"   Medium confidence (50-79%): {len(medium_conf)} leads")
                 print(f"   Low confidence (20-49%): {len(low_conf)} leads")
-                
+
                 quality_score = ((len(high_conf) + len(medium_conf)) / len(df)) * 100
                 print(f"   Overall quality score: {quality_score:.1f}%")
-                
+
                 if quality_score >= 70:
                     print("   ✓ Good attribution quality")
                 elif quality_score >= 50:
                     print("   ⚠️  Moderate attribution quality")
                 else:
                     print("   ✗ Low attribution quality - consider improving data sources")
-            
+
             print(f"\n7. TEST SUMMARY:")
             print("-" * 40)
             print("   ✓ Attribution module is working correctly")
             print("   ✓ All expected output files generated")
             print("   ✓ Attribution results look reasonable")
-            
+
             return True
-            
+
         except Exception as e:
             print(f"   ✗ Error analyzing output: {e}")
             return False
@@ -269,35 +330,50 @@ def test_attribution():
 if __name__ == "__main__":
     # Test GSC integration first
     gsc_result = test_gsc_integration()
-    
+
+    # Test GA4 integration
+    ga4_result = test_ga4_connection()
+
     # Test main attribution
     success = test_attribution()
-    
+
     print("\n" + "="*60)
     print("TEST RESULTS SUMMARY")
     print("="*60)
-    
+
     if gsc_result is True:
         print("✅ GSC INTEGRATION: Enabled and working")
     elif gsc_result is False:
         print("⚠️  GSC INTEGRATION: Configured but not working")
     else:
         print("ℹ️  GSC INTEGRATION: Not configured (optional)")
-    
+
+    if ga4_result is True:
+        print("✅ GA4 INTEGRATION: Enabled and working")
+    elif ga4_result is False:
+        print("⚠️  GA4 INTEGRATION: Configured but not working")
+    else:
+        print("ℹ️  GA4 INTEGRATION: Not configured (optional)")
+
     if success:
         print("✅ TRAFFIC ATTRIBUTION: Passed")
         overall_success = True
     else:
         print("❌ TRAFFIC ATTRIBUTION: Failed")
         overall_success = False
-    
+
     print("="*60)
-    
+
     if overall_success:
         print("🎉 ALL TESTS COMPLETED SUCCESSFULLY")
         if gsc_result is True:
             print("💡 GSC integration will provide enhanced SEO attribution")
         elif gsc_result is None:
             print("💡 Consider setting up GSC for better SEO attribution")
+
+        if ga4_result is True:
+            print("💡 GA4 integration will provide enhanced attribution validation")
+        elif ga4_result is None:
+            print("💡 Consider setting up GA4 for enhanced attribution")
     else:
         print("⚠️  SOME TESTS FAILED - CHECK LOGS ABOVE")

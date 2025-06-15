@@ -52,7 +52,7 @@ def print_colored(text: str, color: str):
     print(f"{color}{text}{Colors.ENDC}")
 
 class LeadAttributionAnalyzer:
-    def __init__(self, use_gsc=False, gsc_credentials_path=None, gsc_property_url=None, gsc_client=None, compare_methods=False):
+    def __init__(self, use_gsc=False, gsc_credentials_path=None, gsc_property_url=None, gsc_client=None, use_ga4=False, ga4_property_id=None, compare_methods=False):
         self.leads_df = None
         self.customers_df = None
         self.seo_keywords_df = None
@@ -73,6 +73,14 @@ class LeadAttributionAnalyzer:
         self.gsc_data = None
         self.gsc_property_url = gsc_property_url
         self.gsc_keywords_df = None
+        
+        # Google Analytics 4 integration parameters
+        self.use_ga4 = use_ga4
+        self.ga4_client = None
+        self.ga4_traffic_data = None
+        
+        if use_ga4:
+            self.setup_ga4_client(ga4_property_id)
         
         # Setup GSC client if credentials provided
         if use_gsc and gsc_credentials_path:
@@ -549,6 +557,25 @@ class LeadAttributionAnalyzer:
             print_colored(f"Error setting up GSC client: {e}", Colors.RED)
             self.gsc_client = None
             self.use_gsc = False
+
+    def setup_ga4_client(self, property_id=None):
+        """Setup GA4 client for pattern matching"""
+        try:
+            from .ga4_client import GoogleAnalytics4Client
+            
+            self.ga4_client = GoogleAnalytics4Client(property_id=property_id)
+            if self.ga4_client.authenticate():
+                print_colored("✓ GA4 client authenticated successfully", Colors.GREEN)
+                self.use_ga4 = True
+            else:
+                print_colored("✗ GA4 authentication failed", Colors.YELLOW)
+                self.use_ga4 = False
+        except ImportError:
+            print_colored("Warning: GA4 client module not available", Colors.YELLOW)
+            self.use_ga4 = False
+        except Exception as e:
+            print_colored(f"✗ Could not setup GA4 client: {e}", Colors.YELLOW)
+            self.use_ga4 = False
     
     def enhance_seo_data_with_gsc(self):
         """Enhance SEO keywords with actual click data from GSC"""
@@ -632,6 +659,44 @@ class LeadAttributionAnalyzer:
         
         print_colored("GSC client not available - returning empty DataFrame", Colors.YELLOW)
         return pd.DataFrame(columns=['date', 'query', 'clicks', 'impressions', 'position', 'page'])
+
+    def load_ga4_traffic_patterns(self):
+        """Load traffic patterns from GA4 for validation"""
+        if not self.ga4_client:
+            print_colored("GA4 client not available for pattern loading", Colors.YELLOW)
+            return None
+            
+        try:
+            # Get date range based on leads
+            valid_timestamps = self.leads_df['first_ticket_date'].dropna()
+            if len(valid_timestamps) == 0:
+                print_colored("No valid lead timestamps for GA4 date range", Colors.YELLOW)
+                return None
+                
+            min_date = valid_timestamps.min()
+            max_date = valid_timestamps.max()
+            
+            # Add buffer days
+            start_date = min_date - pd.Timedelta(days=7)
+            end_date = max_date + pd.Timedelta(days=1)
+            
+            print_colored(f"Loading GA4 traffic data from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}", Colors.BLUE)
+            
+            # Get hourly traffic patterns
+            self.ga4_traffic_data = self.ga4_client.get_hourly_traffic_patterns(
+                start_date, end_date
+            )
+            
+            if self.ga4_traffic_data is not None and not self.ga4_traffic_data.empty:
+                print_colored(f"✓ Loaded {len(self.ga4_traffic_data)} GA4 traffic records", Colors.GREEN)
+            else:
+                print_colored("No GA4 traffic data available for the period", Colors.YELLOW)
+            
+            return self.ga4_traffic_data
+            
+        except Exception as e:
+            print_colored(f"Error loading GA4 data: {e}", Colors.RED)
+            return None
 
     def parse_analysis_period_to_date(self, period_str: str) -> datetime.datetime:
         """Parse analysis period string to datetime"""
@@ -923,7 +988,7 @@ class LeadAttributionAnalyzer:
         """Run the full attribution process"""
         print_colored("Starting attribution analysis...", Colors.BOLD + Colors.BLUE)
         
-        total_steps = 5
+        total_steps = 6 if self.use_ga4 else 5
         
         # Step 1: Identify direct traffic (returning customers)
         self.display_progress_bar(1, total_steps, "Direct Traffic")
@@ -941,8 +1006,14 @@ class LeadAttributionAnalyzer:
         self.display_progress_bar(4, total_steps, "PPC Traffic")
         self.identify_ppc_traffic()
 
-        # Step 5: Calculate confidence scores and finalize attribution
-        self.display_progress_bar(5, total_steps, "Finalizing")
+        # Step 5: GA4 validation (if enabled)
+        if self.use_ga4:
+            self.display_progress_bar(5, total_steps, "GA4 Validation")
+            self.load_ga4_traffic_patterns()
+            self.validate_attribution_with_ga4()
+
+        # Step 6: Calculate confidence scores and finalize attribution
+        self.display_progress_bar(total_steps, total_steps, "Finalizing")
         self.finalize_attribution()
 
         print_colored("\n✓ Attribution analysis completed", Colors.GREEN)
@@ -1844,6 +1915,83 @@ class LeadAttributionAnalyzer:
         if unattributed_count > 0:
             print_colored(f"✓ Identified {referral_count} leads as Referral traffic ({referral_count/unattributed_count*100:.1f}% of unattributed)", Colors.GREEN)
 
+    def validate_attribution_with_ga4(self):
+        """Validate attributions using GA4 traffic patterns"""
+        if not self.use_ga4 or self.ga4_traffic_data is None or self.ga4_traffic_data.empty:
+            print_colored("GA4 validation skipped - no traffic data available", Colors.BLUE)
+            return
+            
+        print_colored("Validating attributions with GA4 traffic patterns...", Colors.BLUE)
+        
+        validated_count = 0
+        boosted_count = 0
+        
+        # Initialize GA4 validation columns
+        self.leads_df['ga4_validated'] = False
+        self.leads_df['ga4_sessions'] = 0
+        
+        for idx, lead in self.leads_df.iterrows():
+            if lead['attributed_source'] in ['SEO', 'PPC', 'Unknown']:
+                # Check for traffic near lead time
+                lead_time = pd.to_datetime(lead['first_ticket_date'])
+                if pd.isna(lead_time):
+                    continue
+                
+                # Look for traffic within 2 hours
+                time_window_start = lead_time - pd.Timedelta(hours=2)
+                time_window_end = lead_time + pd.Timedelta(hours=1)
+                
+                # Find matching traffic
+                matching_traffic = self.ga4_traffic_data[
+                    (self.ga4_traffic_data['datetime'] >= time_window_start) &
+                    (self.ga4_traffic_data['datetime'] <= time_window_end)
+                ]
+                
+                if not matching_traffic.empty:
+                    # Check source alignment
+                    source_map = {
+                        'SEO': ['google', 'bing', 'yahoo'],  # organic sources
+                        'PPC': ['google', 'bing', 'facebook']  # paid sources
+                    }
+
+                    medium_map = {
+                        'SEO': ['organic'],
+                        'PPC': ['cpc', 'ppc', 'paid', 'cpm']
+                    }
+                    
+                    current_source = lead['attributed_source']
+                    
+                    # Find relevant traffic
+                    if current_source in source_map:
+                        relevant_traffic = matching_traffic[
+                            (matching_traffic['source'].str.lower().isin(source_map[current_source])) &
+                            (matching_traffic['medium'].str.lower().isin(medium_map.get(current_source, [])))
+                        ]
+                        
+                        if not relevant_traffic.empty:
+                            # Boost confidence
+                            sessions = relevant_traffic['sessions'].sum()
+                            boost_factor = min(1.3, 1 + (sessions / 100))
+                            
+                            original_confidence = lead['attribution_confidence']
+                            new_confidence = min(100, original_confidence * boost_factor)
+                            
+                            self.leads_df.loc[idx, 'attribution_confidence'] = new_confidence
+                            self.leads_df.loc[idx, 'ga4_validated'] = True
+                            self.leads_df.loc[idx, 'ga4_sessions'] = sessions
+                            
+                            # Update attribution detail to include GA4 validation
+                            current_detail = lead.get('attribution_detail', '')
+                            ga4_detail = f" | GA4: {sessions} sessions validated"
+                            self.leads_df.loc[idx, 'attribution_detail'] = current_detail + ga4_detail
+                            
+                            validated_count += 1
+                            if new_confidence > original_confidence:
+                                boosted_count += 1
+        
+        print_colored(f"✓ GA4 validation complete: {validated_count} attributions validated", Colors.GREEN)
+        print_colored(f"  - {boosted_count} confidence scores boosted", Colors.GREEN)
+
     def finalize_attribution(self):
         """Finalize attribution and set confidence levels"""
         # Categorize confidence levels
@@ -2206,18 +2354,22 @@ def analyze_traffic_attribution(leads_path="./output/leads_with_products.csv",
                               gsc_client=None,
                               gsc_credentials_path=None,
                               gsc_property_url=None,
+                              use_ga4=False,
+                              ga4_property_id=None,
                               compare_methods=False,
                               generate_reports=True):
     """Main function to run traffic attribution analysis"""
     try:
         print_colored("=== Traffic Attribution Analysis ===", Colors.BOLD + Colors.BLUE)
         
-        # Initialize analyzer with GSC support
+        # Initialize analyzer with GSC and GA4 support
         analyzer = LeadAttributionAnalyzer(
             use_gsc=use_gsc,
             gsc_credentials_path=gsc_credentials_path,
             gsc_property_url=gsc_property_url,
             gsc_client=gsc_client,
+            use_ga4=use_ga4,
+            ga4_property_id=ga4_property_id,
             compare_methods=compare_methods
         )
         
