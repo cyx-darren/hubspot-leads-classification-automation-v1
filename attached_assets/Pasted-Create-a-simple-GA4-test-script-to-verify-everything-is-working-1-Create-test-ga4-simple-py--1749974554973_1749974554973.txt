@@ -1,0 +1,67 @@
+Create a simple GA4 test script to verify everything is working:
+
+1. Create test_ga4_simple.py:
+   ```python
+   import os
+   from datetime import datetime, timedelta
+   
+   print("Testing Google Analytics 4 Setup...")
+   print("-" * 50)
+   
+   # Check configuration
+   property_id = os.environ.get('GA4_PROPERTY_ID')
+   has_creds = bool(os.environ.get('GSC_CREDENTIALS'))
+   
+   print(f"GA4 Property ID: {property_id}")
+   print(f"Credentials: {'✓ Found (reusing GSC)' if has_creds else '✗ Not found'}")
+   
+   if not property_id or not has_creds:
+       print("\n❌ Missing required configuration")
+       exit(1)
+   
+   print("\n" + "-" * 50)
+   print("Testing GA4 Connection...")
+   
+   try:
+       from modules.ga4_client import GoogleAnalytics4Client
+       
+       client = GoogleAnalytics4Client()
+       client.authenticate()
+       
+       print("✓ Authentication successful!")
+       
+       # Get last 7 days of traffic
+       end_date = datetime.now()
+       start_date = end_date - timedelta(days=7)
+       
+       print(f"\nFetching traffic data from {start_date.date()} to {end_date.date()}...")
+       
+       # Test basic traffic report
+       traffic = client.get_traffic_by_source(start_date, end_date)
+       
+       print(f"✓ Retrieved {len(traffic)} traffic records")
+       
+       if not traffic.empty:
+           print("\nTop traffic sources (last 7 days):")
+           summary = traffic.groupby(['source', 'medium'])['sessions'].sum().sort_values(ascending=False).head()
+           for (source, medium), sessions in summary.items():
+               print(f"  - {source} / {medium}: {sessions} sessions")
+           
+           total_sessions = traffic['sessions'].sum()
+           print(f"\nTotal sessions: {total_sessions}")
+       
+       # Test hourly patterns
+       print("\nTesting hourly traffic patterns...")
+       hourly = client.get_hourly_traffic_patterns(
+           datetime.now() - timedelta(days=1),
+           datetime.now()
+       )
+       
+       print(f"✓ Retrieved {len(hourly)} hourly records")
+       
+       print("\n🎉 GA4 integration is working!")
+       
+   except Exception as e:
+       print(f"\n❌ Error: {e}")
+       import traceback
+       traceback.print_exc()
