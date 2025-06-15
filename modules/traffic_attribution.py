@@ -72,6 +72,20 @@ class LeadAttributionAnalyzer:
         self.gsc_client = gsc_client
         self.gsc_click_data = None
         
+        # Initialize GSC client if requested but not provided
+        if use_gsc_data and gsc_client is None:
+            try:
+                from .gsc_client import create_gsc_client
+                self.gsc_client = create_gsc_client()
+                if self.gsc_client:
+                    print_colored("✓ GSC client auto-initialized", Colors.GREEN)
+                else:
+                    print_colored("Warning: Could not auto-initialize GSC client", Colors.YELLOW)
+                    self.use_gsc_data = False
+            except ImportError:
+                print_colored("Warning: GSC client module not available", Colors.YELLOW)
+                self.use_gsc_data = False
+        
         # Comparison mode for testing different attribution methods
         self.compare_methods = compare_methods
 
@@ -849,17 +863,142 @@ class LeadAttributionAnalyzer:
     def _identify_seo_from_gsc(self) -> int:
         """
         Identify SEO traffic using Google Search Console data
-        TODO: Phase 2 - Implement GSC-based attribution
+        Uses real click data instead of just ranking positions
         """
-        # TODO: Phase 2 - Implement GSC attribution logic
-        # This method will:
-        # 1. Match lead timestamps with GSC click data
-        # 2. Use actual click/impression data for confidence scoring
-        # 3. Match lead keywords with GSC query data
-        # 4. Use real position data from GSC instead of CSV estimates
+        if not self.gsc_client:
+            print_colored("GSC client not available for real-time attribution", Colors.YELLOW)
+            return 0
+            
+        # Only consider leads not already attributed
+        unattributed_mask = self.leads_df['attributed_source'] == 'Unknown'
+        seo_count = 0
+
+        # Get date range for GSC data based on lead timestamps
+        if 'first_inquiry_timestamp' in self.leads_df.columns:
+            valid_timestamps = self.leads_df['first_inquiry_timestamp'].dropna()
+            if len(valid_timestamps) > 0:
+                min_date = valid_timestamps.min()
+                max_date = valid_timestamps.max()
+                
+                # Extend range slightly for attribution window
+                start_date = min_date - pd.Timedelta(days=2)
+                end_date = max_date + pd.Timedelta(days=1)
+            else:
+                # Fallback to recent period
+                end_date = datetime.datetime.now()
+                start_date = end_date - datetime.timedelta(days=30)
+        else:
+            # Fallback to recent period
+            end_date = datetime.datetime.now()
+            start_date = end_date - datetime.timedelta(days=30)
+
+        # Get GSC click data for the period
+        print_colored(f"Fetching GSC data from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}", Colors.BLUE)
+        gsc_data = self.gsc_client.get_search_queries(start_date, end_date, limit=2000)
         
-        print_colored("GSC-based SEO attribution not yet implemented", Colors.YELLOW)
-        return 0
+        if gsc_data is None or gsc_data.empty:
+            print_colored("No GSC data available for attribution", Colors.YELLOW)
+            return 0
+
+        print_colored(f"✓ Retrieved {len(gsc_data)} search queries with {gsc_data['clicks'].sum()} total clicks", Colors.GREEN)
+
+        # Loop through unattributed leads
+        for idx, lead in self.leads_df[unattributed_mask].iterrows():
+            lead_keywords = lead.get('extracted_keywords', [])
+            
+            if not lead_keywords:
+                continue
+
+            # Match lead keywords with GSC queries
+            keyword_match_score = 0
+            matched_queries = []
+            total_clicks = 0
+            total_impressions = 0
+            best_position = 100
+
+            for _, gsc_row in gsc_data.iterrows():
+                gsc_query = str(gsc_row['query']).lower()
+                gsc_clicks = gsc_row['clicks']
+                gsc_impressions = gsc_row['impressions']
+                gsc_position = gsc_row['position']
+                
+                # Skip queries with no clicks
+                if gsc_clicks == 0:
+                    continue
+
+                for lead_kw in lead_keywords:
+                    # Use fuzzy matching if available
+                    if FUZZY_AVAILABLE:
+                        similarity = fuzz.token_sort_ratio(lead_kw, gsc_query)
+                    else:
+                        similarity = 100 if lead_kw in gsc_query else 0
+                    
+                    if similarity > 60:  # Match threshold
+                        # Weight by actual clicks (real traffic evidence)
+                        click_weight = min(100, gsc_clicks * 10)  # Scale clicks to 0-100
+                        position_bonus = max(0, (20 - gsc_position) * 2)  # Better positions get bonus
+                        
+                        match_score = (similarity * 0.4) + (click_weight * 0.4) + (position_bonus * 0.2)
+                        
+                        keyword_match_score = max(keyword_match_score, match_score)
+                        matched_queries.append((lead_kw, gsc_query, similarity, gsc_clicks))
+                        total_clicks += gsc_clicks
+                        total_impressions += gsc_impressions
+                        best_position = min(best_position, gsc_position)
+
+            # Calculate GSC-based confidence score
+            if keyword_match_score > 0 and total_clicks > 0:
+                # Base score from keyword matching
+                base_confidence = keyword_match_score
+                
+                # Boost confidence based on actual clicks (real traffic evidence)
+                click_confidence_boost = min(30, total_clicks * 5)  # Up to 30 points for clicks
+                
+                # Position quality bonus
+                if best_position <= 3:
+                    position_bonus = 20
+                elif best_position <= 10:
+                    position_bonus = 10
+                elif best_position <= 20:
+                    position_bonus = 5
+                else:
+                    position_bonus = 0
+
+                # Time proximity bonus (if we have timestamp data)
+                time_bonus = 0
+                if 'first_inquiry_timestamp' in lead and pd.notna(lead['first_inquiry_timestamp']):
+                    lead_date = lead['first_inquiry_timestamp']
+                    # Check if GSC data date is close to lead date
+                    if 'date' in gsc_data.columns:
+                        # Simple time proximity check (same week gets bonus)
+                        time_diff_days = abs((lead_date - pd.Timestamp(start_date)).days)
+                        if time_diff_days <= 7:
+                            time_bonus = 15
+                        elif time_diff_days <= 14:
+                            time_bonus = 10
+
+                # Final confidence calculation
+                confidence_score = base_confidence + click_confidence_boost + position_bonus + time_bonus
+                confidence_score = min(100, confidence_score)  # Cap at 100
+
+                # Use higher threshold for GSC attribution since we have real click data
+                threshold = self.confidence_thresholds['medium']  # 50% threshold
+
+                if confidence_score >= threshold:
+                    self.leads_df.loc[idx, 'attributed_source'] = 'SEO'
+                    self.leads_df.loc[idx, 'attribution_confidence'] = confidence_score
+
+                    matched_queries_str = '; '.join([f"{l}-{g}({c} clicks)" for l, g, s, c in matched_queries[:3]])
+                    detail = f"GSC matches: {matched_queries_str}, Total clicks: {total_clicks}, Best position: {best_position:.1f}"
+                    self.leads_df.loc[idx, 'attribution_detail'] = detail
+
+                    seo_count += 1
+
+        unattributed_count = unattributed_mask.sum()
+        if unattributed_count > 0:
+            print_colored(f"✓ Identified {seo_count} leads as SEO traffic using GSC data ({seo_count/unattributed_count*100:.1f}% of unattributed)", Colors.GREEN)
+        
+        return seo_count
 
     def _identify_seo_from_csv(self) -> int:
         """Identify SEO traffic using CSV keyword data (current implementation)"""
@@ -1673,12 +1812,28 @@ def analyze_traffic_attribution(leads_path="./output/leads_with_products.csv",
                               output_path="./output/leads_with_attribution.csv",
                               use_gsc_data=False,
                               gsc_client=None,
+                              gsc_credentials_path=None,
+                              gsc_property_url=None,
                               compare_methods=False,
                               generate_reports=True):
     """Main function to run traffic attribution analysis"""
     try:
         print_colored("=== Traffic Attribution Analysis ===", Colors.BOLD + Colors.BLUE)
         
+        # Initialize GSC client if credentials provided
+        if use_gsc_data and gsc_client is None and gsc_credentials_path and gsc_property_url:
+            try:
+                from .gsc_client import create_gsc_client
+                gsc_client = create_gsc_client(gsc_credentials_path, gsc_property_url)
+                if gsc_client:
+                    print_colored("✓ GSC client created with provided credentials", Colors.GREEN)
+                else:
+                    print_colored("Warning: Failed to create GSC client with provided credentials", Colors.YELLOW)
+                    use_gsc_data = False
+            except ImportError:
+                print_colored("Warning: GSC client module not available", Colors.YELLOW)
+                use_gsc_data = False
+
         # Initialize analyzer
         analyzer = LeadAttributionAnalyzer(
             use_gsc_data=use_gsc_data,
