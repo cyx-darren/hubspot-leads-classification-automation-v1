@@ -48,15 +48,15 @@ class GoogleSearchConsoleClient:
     
     def __init__(self, credentials_path=None, property_url=None):
         """
-        Initialize GSC client with service account credentials.
+        Initialize GSC client with optional parameters.
         
         Args:
             credentials_path: Path to service account JSON file (optional, will try environment first)
             property_url: GSC property URL (e.g., 'https://example.com/')
         """
-        self.property_url = property_url
-        self.service = None
         self.credentials_path = credentials_path
+        self.property_url = property_url or os.environ.get('GSC_PROPERTY_URL')
+        self.service = None
         self.authenticated = False
         
         if not GSC_AVAILABLE:
@@ -64,11 +64,29 @@ class GoogleSearchConsoleClient:
             return
             
         # Auto-authenticate if property_url provided or available in environment
-        if property_url or os.environ.get('GSC_PROPERTY_URL'):
+        if self.property_url:
             try:
-                self.authenticate(property_url)
+                self.authenticate()
             except Exception as e:
                 print_colored(f"Auto-authentication failed: {e}", Colors.YELLOW)
+    
+    def test_connection(self):
+        """Test the GSC connection with a simple query"""
+        try:
+            # List available sites to verify connection
+            sites = self.service.sites().list().execute()
+            
+            # Check if our property is in the list
+            site_urls = [site.get('siteUrl', '') for site in sites.get('siteEntry', [])]
+            
+            if self.property_url in site_urls:
+                print_colored(f"✓ Verified access to property: {self.property_url}", Colors.GREEN)
+            else:
+                print_colored(f"⚠ Property {self.property_url} not found in accessible sites", Colors.YELLOW)
+                print_colored(f"  Available sites: {site_urls}", Colors.BLUE)
+                
+        except Exception as e:
+            print_colored(f"Connection test failed: {e}", Colors.RED)
     
     def get_credentials(self):
         """Get credentials from file or environment"""
@@ -93,7 +111,7 @@ class GoogleSearchConsoleClient:
         
         return None
     
-    def authenticate(self, property_url: str = None) -> bool:
+    def authenticate(self, property_url=None) -> bool:
         """
         Authenticate using service account credentials from environment or file.
         
@@ -108,74 +126,48 @@ class GoogleSearchConsoleClient:
             return False
             
         try:
-            # Use provided URL or get from environment
-            self.property_url = property_url or os.environ.get('GSC_PROPERTY_URL')
+            # Get property URL from parameter or environment
+            if property_url:
+                self.property_url = property_url
+            elif not self.property_url:
+                self.property_url = os.environ.get('GSC_PROPERTY_URL')
             
+            # Validate property URL
             if not self.property_url:
-                print_colored("Error: No property URL provided. Set GSC_PROPERTY_URL in environment.", Colors.RED)
-                return False
+                raise ValueError("No property URL provided. Set GSC_PROPERTY_URL in environment or pass as parameter.")
             
-            # Get credentials from environment or file
+            # Ensure property URL is a string
+            self.property_url = str(self.property_url).strip()
+            
+            print(f"Using property URL: {self.property_url}")
+            
+            # Get credentials
             creds_data = self.get_credentials()
             if not creds_data:
-                print_colored("Error: No GSC credentials found in environment or file", Colors.RED)
-                return False
+                raise ValueError("No GSC credentials found")
             
-            # Load service account credentials from data
-            try:
-                credentials = service_account.Credentials.from_service_account_info(
-                    creds_data,
-                    scopes=['https://www.googleapis.com/auth/webmasters.readonly']
-                )
-                print_colored("✓ Loaded service account credentials from environment/file", Colors.GREEN)
-            except Exception as e:
-                print_colored(f"Error loading credentials: {e}", Colors.RED)
-                return False
+            # Create credentials object
+            from google.oauth2 import service_account
             
-            # Build the Search Console service
-            try:
-                self.service = build('searchconsole', 'v1', credentials=credentials)
-                print_colored("✓ Google Search Console service initialized", Colors.GREEN)
-            except Exception as e:
-                print_colored(f"Error building GSC service: {e}", Colors.RED)
-                return False
+            credentials = service_account.Credentials.from_service_account_info(
+                creds_data,
+                scopes=['https://www.googleapis.com/auth/webmasters.readonly']
+            )
             
-            # Validate property URL format
-            if not property_url.startswith(('http://', 'https://')):
-                print_colored(f"Warning: Property URL should start with http:// or https://", Colors.YELLOW)
-                property_url = f"https://{property_url}"
+            # Build service
+            from googleapiclient.discovery import build
             
-            if not property_url.endswith('/'):
-                property_url += '/'
+            self.service = build('searchconsole', 'v1', credentials=credentials)
+            print_colored("✓ GSC service created successfully", Colors.GREEN)
             
-            self.property_url = property_url
+            # Test the connection with a simple query
+            self.test_connection()
             
-            # Test authentication by listing sites
-            try:
-                sites_response = self.service.sites().list().execute()
-                available_sites = [site['siteUrl'] for site in sites_response.get('siteEntry', [])]
-                
-                if self.property_url in available_sites:
-                    print_colored(f"✓ Authenticated for property: {self.property_url}", Colors.GREEN)
-                    self.authenticated = True
-                    return True
-                else:
-                    print_colored(f"Error: Property {self.property_url} not accessible", Colors.RED)
-                    print_colored(f"Available properties: {', '.join(available_sites)}", Colors.BLUE)
-                    return False
-                    
-            except HttpError as e:
-                if e.resp.status == 403:
-                    print_colored("Error: Access denied - check service account permissions", Colors.RED)
-                elif e.resp.status == 429:
-                    print_colored("Error: API quota exceeded - try again later", Colors.RED)
-                else:
-                    print_colored(f"API Error: {e}", Colors.RED)
-                return False
+            self.authenticated = True
+            return True
             
         except Exception as e:
             print_colored(f"Authentication error: {e}", Colors.RED)
-            logger.error(f"GSC authentication error: {e}")
             return False
     
     def get_search_queries(self, start_date: datetime, end_date: datetime, limit: int = 1000) -> Optional[pd.DataFrame]:
