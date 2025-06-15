@@ -281,6 +281,18 @@ def run_traffic_attribution():
     print("STEP 4: Running Traffic Attribution Analysis")
     print("="*50)
 
+    # Check Google Search Console integration
+    print("\nChecking Google Search Console integration...")
+    try:
+        from modules.gsc_client import get_gsc_credentials
+        if get_gsc_credentials():
+            print_colored("✓ GSC credentials found - will use real search data", "green")
+        else:
+            print_colored("ℹ️  GSC not configured - using ranking data only", "blue")
+            print_colored("  To enable: Add GSC_CREDENTIALS to Secrets or upload credentials file", "blue")
+    except Exception as e:
+        print_colored(f"Warning: Could not check GSC status: {e}", "yellow")
+
     try:
         from modules.traffic_attribution import analyze_traffic_attribution
 

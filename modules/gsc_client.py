@@ -452,6 +452,41 @@ class GoogleSearchConsoleClient:
                 'error': str(e)
             }
 
+def get_gsc_credentials():
+    """Get GSC credentials from Secrets or file"""
+    import json
+    
+    # First try Replit Secrets
+    creds_json = os.environ.get('GSC_CREDENTIALS')
+    if creds_json:
+        try:
+            return json.loads(creds_json)
+        except json.JSONDecodeError:
+            print_colored("Warning: Invalid JSON in GSC_CREDENTIALS secret", Colors.YELLOW)
+            return None
+    
+    # Then try file
+    file_path = "data/credentials/gsc_credentials.json"
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError):
+            print_colored(f"Warning: Could not read credentials from {file_path}", Colors.YELLOW)
+            return None
+    
+    return None
+
+def get_property_url():
+    """Get property URL from environment or config"""
+    # Try environment variable first
+    url = os.environ.get('GSC_PROPERTY_URL')
+    if url:
+        return url
+    
+    # Default to your domain
+    return 'https://easyprintsg.com'
+
 def create_gsc_client(credentials_path: str = None, property_url: str = None) -> Optional[GoogleSearchConsoleClient]:
     """
     Factory function to create and authenticate GSC client.
@@ -467,17 +502,21 @@ def create_gsc_client(credentials_path: str = None, property_url: str = None) ->
         print_colored("Cannot create GSC client: Google API libraries not installed", Colors.RED)
         return None
     
-    # Use environment variables as fallback
+    # Use helper functions as fallback
     if not credentials_path:
-        credentials_path = os.environ.get('GSC_CREDENTIALS_PATH')
+        credentials = get_gsc_credentials()
+        if not credentials:
+            print_colored("GSC credentials not found", Colors.YELLOW)
+            print_colored("Add GSC_CREDENTIALS to Secrets or upload credentials file", Colors.BLUE)
+            return None
+        # Save credentials to temp file if from secrets
+        credentials_path = "data/temp_gsc_credentials.json"
+        import json
+        with open(credentials_path, 'w') as f:
+            json.dump(credentials, f)
     
     if not property_url:
-        property_url = os.environ.get('GSC_PROPERTY_URL')
-    
-    if not credentials_path or not property_url:
-        print_colored("GSC credentials path and property URL required", Colors.YELLOW)
-        print_colored("Set GSC_CREDENTIALS_PATH and GSC_PROPERTY_URL environment variables", Colors.BLUE)
-        return None
+        property_url = get_property_url()
     
     client = GoogleSearchConsoleClient()
     
