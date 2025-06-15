@@ -1,7 +1,7 @@
 ======================================================================
 TRAFFIC ATTRIBUTION ANALYSIS REPORT
 ======================================================================
-Generated: 2025-06-15 01:29:44
+Generated: 2025-06-15 08:10:17
 Total Leads Analyzed: 49
 
 1. ATTRIBUTION BREAKDOWN BY SOURCE
