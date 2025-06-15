@@ -88,29 +88,46 @@ def test_ga4_connection():
         print_colored(f"✓ Retrieved {len(traffic)} traffic records", "green")
         
         if len(traffic) > 0:
-            print("\nTop 5 traffic sources:")
-            top_sources = traffic.groupby(['source', 'medium'])['sessions'].sum().nlargest(5)
-            for (source, medium), sessions in top_sources.items():
-                print(f"  {source}/{medium}: {sessions} sessions")
+            print("\nTop traffic sources (last 7 days):")
+            summary = traffic.groupby(['source', 'medium'])['sessions'].sum().sort_values(ascending=False).head()
+            for (source, medium), sessions in summary.items():
+                print(f"  - {source} / {medium}: {sessions} sessions")
             
             total_sessions = traffic['sessions'].sum()
-            total_users = traffic['total_users'].sum()
             print(f"\nTotal sessions: {total_sessions}")
-            print(f"Total users: {total_users}")
         
+        # Test hourly patterns
+        print("\nTesting hourly traffic patterns...")
+        try:
+            hourly = client.get_hourly_traffic_patterns(
+                datetime.now() - timedelta(days=1),
+                datetime.now()
+            )
+            
+            print_colored(f"✓ Retrieved {len(hourly)} hourly records", "green")
+            
+            if not hourly.empty:
+                print("Recent hourly activity:")
+                recent_hours = hourly.groupby('datetime')['sessions'].sum().tail(5)
+                for dt, sessions in recent_hours.items():
+                    print(f"  - {dt.strftime('%Y-%m-%d %H:00')}: {sessions} sessions")
+        
+        except Exception as e:
+            print_colored(f"⚠️  Hourly patterns test failed: {e}", "yellow")
+            print("This is not critical for basic GA4 functionality")
+        
+        print_colored("\n🎉 GA4 integration is working!", "green")
         return True
         
     except ImportError as e:
-        print_colored(f"✗ Import error: {e}", "red")
-        print("Make sure google-analytics-data is installed:")
-        print("pip install google-analytics-data")
+        print_colored("✗ GA4 client module not available", "red")
+        print(f"Import error: {e}")
+        print("Make sure google-analytics-data is installed")
         return False
     except Exception as e:
-        print_colored(f"✗ GA4 connection failed: {e}", "red")
-        print("\nTroubleshooting tips:")
-        print("- Verify GA4_PROPERTY_ID is correct")
-        print("- Ensure service account has Analytics Viewer permissions")
-        print("- Check if Analytics Data API is enabled in Google Cloud")
+        print_colored(f"✗ GA4 connection test failed: {e}", "red")
+        import traceback
+        traceback.print_exc()
         return False
 
 def main():
@@ -148,4 +165,6 @@ if __name__ == "__main__":
         sys.exit(1)
     except Exception as e:
         print_colored(f"\nUnexpected error: {e}", "red")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
