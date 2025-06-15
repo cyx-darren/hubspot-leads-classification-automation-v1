@@ -289,6 +289,22 @@ def run_traffic_attribution():
             print_colored("Warning: leads_with_products.csv not found. Skipping attribution.", "yellow")
             return 0
 
+        # Check for GSC credentials
+        gsc_creds_path = "data/gsc_credentials.json"
+        use_gsc = os.path.exists(gsc_creds_path)
+        gsc_property_url = os.environ.get('GSC_PROPERTY_URL')
+        
+        if use_gsc:
+            print_colored("✓ GSC credentials found - using real search click data", "green")
+            if gsc_property_url:
+                print_colored(f"  Property URL: {gsc_property_url}", "blue")
+            else:
+                print_colored("  Note: GSC_PROPERTY_URL not set in secrets - will try to auto-detect", "blue")
+        else:
+            print_colored("ℹ️  GSC credentials not found - using ranking data only", "blue")
+            print_colored("  Tip: Setup GSC integration for enhanced SEO attribution", "blue")
+            print_colored("  See data/gsc_setup.md for instructions", "blue")
+
         # Define data file paths (these should exist in the data/ directory)
         seo_path = "data/Feb2025-SEO.csv"
         ppc_standard_path = "data/When your ads showed Custom and Corporate Gifts and Lanyards (1).csv"
@@ -314,7 +330,10 @@ def run_traffic_attribution():
                 seo_csv_path=seo_path,
                 ppc_standard_path=ppc_standard_path,
                 ppc_dynamic_path=ppc_dynamic_path,
-                output_path="output/leads_with_attribution.csv"
+                output_path="output/leads_with_attribution.csv",
+                use_gsc=use_gsc,
+                gsc_credentials_path=gsc_creds_path if use_gsc else None,
+                gsc_property_url=gsc_property_url
             )
 
             if result > 0:
