@@ -12,7 +12,6 @@ PyPDF2
 fuzzywuzzy
 python-Levenshtein
 openai
-fuzzywuzzy
-python-Levenshtein
-fuzzywuzzy
-python-Levenshtein
+google-auth
+google-auth-oauthlib
+google-api-python-client
