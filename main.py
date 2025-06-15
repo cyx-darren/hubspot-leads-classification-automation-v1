@@ -306,6 +306,9 @@ def run_traffic_attribution():
         use_gsc = os.path.exists(gsc_creds_path)
         gsc_property_url = os.environ.get('GSC_PROPERTY_URL')
         
+        # Check for GA4 integration
+        use_ga4 = bool(os.environ.get('GA4_PROPERTY_ID'))
+        
         if use_gsc:
             print_colored("✓ GSC credentials found - using real search click data", "green")
             if gsc_property_url:
@@ -316,6 +319,11 @@ def run_traffic_attribution():
             print_colored("ℹ️  GSC credentials not found - using ranking data only", "blue")
             print_colored("  Tip: Setup GSC integration for enhanced SEO attribution", "blue")
             print_colored("  See data/gsc_setup.md for instructions", "blue")
+        
+        if use_ga4:
+            print_colored("✓ GA4 integration detected - will validate attributions", "green")
+        else:
+            print_colored("ℹ️  GA4 not configured - attribution validation disabled", "blue")
 
         # Define data file paths (these should exist in the data/ directory)
         seo_path = "data/Feb2025-SEO.csv"
@@ -345,7 +353,8 @@ def run_traffic_attribution():
                 output_path="output/leads_with_attribution.csv",
                 use_gsc=use_gsc,
                 gsc_credentials_path=gsc_creds_path if use_gsc else None,
-                gsc_property_url=gsc_property_url
+                gsc_property_url=gsc_property_url,
+                use_ga4=use_ga4
             )
 
             if result > 0:

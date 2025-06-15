@@ -197,13 +197,15 @@ def test_attribution():
     print("\n2. RUNNING ATTRIBUTION ANALYSIS:")
     print("-" * 40)
     try:
-        # Check if GSC is available
+        # Check if GSC and GA4 are available
         use_gsc = bool(os.environ.get('GSC_CREDENTIALS')) and bool(os.environ.get('GSC_PROPERTY_URL'))
+        use_ga4 = bool(os.environ.get('GA4_PROPERTY_ID'))
 
-        if use_gsc:
-            print("✓ GSC integration enabled for enhanced attribution")
+        print(f"✓ GSC integration {'enabled' if use_gsc else 'disabled'} for enhanced attribution")
+        if use_ga4:
+            print("✓ GA4 integration enabled for attribution validation")
         else:
-            print("ℹ️  Using CSV data only (GSC not configured)")
+            print("ℹ️  GA4 not configured - attribution validation disabled")
 
         result = analyze_traffic_attribution(
             leads_path="output/leads_with_products.csv",
@@ -212,6 +214,7 @@ def test_attribution():
             ppc_dynamic_path="data/When your ads showed Dynamic Search Ads (1).csv",
             output_path="output/leads_with_attribution.csv",
             use_gsc=use_gsc,
+            use_ga4=use_ga4,
             generate_reports=True
         )
 
