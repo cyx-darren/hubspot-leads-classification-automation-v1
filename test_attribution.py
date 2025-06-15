@@ -105,66 +105,63 @@ def test_gsc_integration():
         print(f"✗ GSC connection test failed: {e}")
         return False
 
-def test_ga4_connection():
-    """Test GA4 connection and show sample data"""
+def test_ga4_integration():
+    """Test GA4 integration if configured"""
     print("\n" + "="*60)
-    print("TESTING GOOGLE ANALYTICS 4 INTEGRATION")
+    print("TESTING GA4 INTEGRATION")
     print("="*60)
-
-    # Check GA4 configuration
-    ga4_creds = os.environ.get('GA4_CREDENTIALS')
-    gsc_creds = os.environ.get('GSC_CREDENTIALS')  # Fallback
-    property_id = os.environ.get('GA4_PROPERTY_ID')
-
-    has_credentials = bool(ga4_creds or gsc_creds)
-
-    if not has_credentials:
-        print("ℹ️  GA4 credentials not found - skipping GA4 tests")
-        print("To enable GA4 integration:")
-        print("  1. Add GA4_CREDENTIALS to Replit Secrets")
-        print("  2. Add GA4_PROPERTY_ID to Replit Secrets")
-        print("  3. Re-run tests")
-        return False
-
-    if not property_id:
-        print("⚠️  GA4_PROPERTY_ID not set in environment")
+    
+    # Check if GA4 is configured
+    ga4_property_id = os.environ.get('GA4_PROPERTY_ID')
+    ga4_creds = os.environ.get('GA4_CREDENTIALS') or os.environ.get('GSC_CREDENTIALS')
+    
+    if not ga4_property_id:
+        print("✗ GA4_PROPERTY_ID not found in environment")
         print("  Add your GA4 property ID to Replit Secrets")
         return False
-
-    print(f"✓ GA4 property ID: {property_id}")
-
+        
+    if not ga4_creds:
+        print("✗ GA4 credentials not found")
+        print("  Add GA4_CREDENTIALS to Secrets or reuse GSC_CREDENTIALS")
+        return False
+        
+    print(f"✓ GA4 Property ID: {ga4_property_id}")
+    print("✓ GA4 credentials found")
+    
+    # Test connection
     try:
         from modules.ga4_client import GoogleAnalytics4Client
         from datetime import datetime, timedelta
-
-        print("\nTesting GA4 connection...")
+        
         client = GoogleAnalytics4Client()
         client.authenticate()
-
-        # Get last 7 days of data
+        
+        # Get sample data
         end_date = datetime.now()
         start_date = end_date - timedelta(days=7)
-
+        
         traffic = client.get_traffic_by_source(start_date, end_date)
-
-        print(f"✓ GA4 connection successful!")
+        
+        print(f"\n✓ Successfully connected to GA4!")
         print(f"✓ Retrieved {len(traffic)} traffic records")
-
+        
+        # Show traffic summary
         if not traffic.empty:
-            print("\nTop traffic sources:")
-            top_sources = traffic.groupby(['source', 'medium'])['sessions'].sum().nlargest(5)
-            for (source, medium), sessions in top_sources.items():
-                print(f"  - {source}/{medium}: {sessions} sessions")
-
-            total_sessions = traffic['sessions'].sum()
-            print(f"\nTotal sessions: {total_sessions}")
+            print("\nTraffic Summary (Last 7 Days):")
+            summary = traffic.groupby(['source', 'medium'])['sessions'].sum().sort_values(ascending=False).head()
+            for (source, medium), sessions in summary.items():
+                print(f"  {source} / {medium}: {sessions} sessions")
         else:
-            print("No traffic data available for the period")
-
+            print("\nNo traffic data available for the period")
+            print("This is normal for:")
+            print("  - New GA4 properties")
+            print("  - Properties with low traffic")
+            print("  - Recent date ranges (GA4 has processing delays)")
+            
         return True
-
+        
     except Exception as e:
-        print(f"\n✗ GA4 connection test failed: {e}")
+        print(f"\n✗ GA4 test failed: {e}")
         return False
 
 def test_attribution():
@@ -332,7 +329,12 @@ if __name__ == "__main__":
     gsc_result = test_gsc_integration()
 
     # Test GA4 integration
-    ga4_result = test_ga4_connection()
+    ga4_result = test_ga4_integration()
+    
+    if ga4_result:
+        print("\n✓ GA4 integration ready for use!")
+    else:
+        print("\n⚠ GA4 integration not available - attribution will work without validation")
 
     # Test main attribution
     success = test_attribution()
