@@ -51,7 +51,7 @@ class GoogleSearchConsoleClient:
         Initialize GSC client with service account credentials.
         
         Args:
-            credentials_path: Path to service account JSON file
+            credentials_path: Path to service account JSON file (optional, will try environment first)
             property_url: GSC property URL (e.g., 'https://example.com/')
         """
         self.property_url = property_url
@@ -63,16 +63,41 @@ class GoogleSearchConsoleClient:
             print_colored("GSC client initialized but Google API libraries not available", Colors.YELLOW)
             return
             
-        # Auto-authenticate if credentials provided
-        if credentials_path and property_url:
-            self.authenticate(credentials_path, property_url)
+        # Auto-authenticate if property_url provided or available in environment
+        if property_url or os.environ.get('GSC_PROPERTY_URL'):
+            try:
+                self.authenticate(property_url)
+            except Exception as e:
+                print_colored(f"Auto-authentication failed: {e}", Colors.YELLOW)
     
-    def authenticate(self, credentials_path: str, property_url: str) -> bool:
+    def get_credentials(self):
+        """Get credentials from file or environment"""
+        # Try environment variable first
+        creds_json = os.environ.get('GSC_CREDENTIALS')
+        if creds_json:
+            try:
+                return json.loads(creds_json)
+            except json.JSONDecodeError:
+                print_colored("Error: Invalid JSON in GSC_CREDENTIALS", Colors.RED)
+                return None
+        
+        # Try file as fallback
+        creds_path = self.credentials_path or "data/gsc_credentials.json"
+        if os.path.exists(creds_path):
+            try:
+                with open(creds_path, 'r') as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, FileNotFoundError):
+                print_colored(f"Error reading credentials from {creds_path}", Colors.RED)
+                return None
+        
+        return None
+    
+    def authenticate(self, property_url: str = None) -> bool:
         """
-        Authenticate using service account credentials.
+        Authenticate using service account credentials from environment or file.
         
         Args:
-            credentials_path: Path to service account JSON file
             property_url: GSC property URL (e.g., 'https://example.com/')
             
         Returns:
@@ -83,21 +108,26 @@ class GoogleSearchConsoleClient:
             return False
             
         try:
-            # Check if credentials file exists
-            if not os.path.exists(credentials_path):
-                print_colored(f"Error: Credentials file not found: {credentials_path}", Colors.RED)
+            # Use provided URL or get from environment
+            self.property_url = property_url or os.environ.get('GSC_PROPERTY_URL')
+            
+            if not self.property_url:
+                print_colored("Error: No property URL provided. Set GSC_PROPERTY_URL in environment.", Colors.RED)
                 return False
             
-            # Load service account credentials
+            # Get credentials from environment or file
+            creds_data = self.get_credentials()
+            if not creds_data:
+                print_colored("Error: No GSC credentials found in environment or file", Colors.RED)
+                return False
+            
+            # Load service account credentials from data
             try:
-                credentials = service_account.Credentials.from_service_account_file(
-                    credentials_path,
+                credentials = service_account.Credentials.from_service_account_info(
+                    creds_data,
                     scopes=['https://www.googleapis.com/auth/webmasters.readonly']
                 )
-                print_colored(f"✓ Loaded service account credentials from {credentials_path}", Colors.GREEN)
-            except json.JSONDecodeError as e:
-                print_colored(f"Error: Invalid JSON in credentials file: {e}", Colors.RED)
-                return False
+                print_colored("✓ Loaded service account credentials from environment/file", Colors.GREEN)
             except Exception as e:
                 print_colored(f"Error loading credentials: {e}", Colors.RED)
                 return False
@@ -465,15 +495,20 @@ def get_gsc_credentials():
             print_colored("Warning: Invalid JSON in GSC_CREDENTIALS secret", Colors.YELLOW)
             return None
     
-    # Then try file
-    file_path = "data/credentials/gsc_credentials.json"
-    if os.path.exists(file_path):
-        try:
-            with open(file_path, 'r') as f:
-                return json.load(f)
-        except (json.JSONDecodeError, FileNotFoundError):
-            print_colored(f"Warning: Could not read credentials from {file_path}", Colors.YELLOW)
-            return None
+    # Then try standard file locations
+    file_paths = [
+        "data/gsc_credentials.json",
+        "data/credentials/gsc_credentials.json"
+    ]
+    
+    for file_path in file_paths:
+        if os.path.exists(file_path):
+            try:
+                with open(file_path, 'r') as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, FileNotFoundError):
+                print_colored(f"Warning: Could not read credentials from {file_path}", Colors.YELLOW)
+                continue
     
     return None
 
@@ -492,8 +527,8 @@ def create_gsc_client(credentials_path: str = None, property_url: str = None) ->
     Factory function to create and authenticate GSC client.
     
     Args:
-        credentials_path: Path to service account JSON file
-        property_url: GSC property URL
+        credentials_path: Path to service account JSON file (optional)
+        property_url: GSC property URL (optional, will use environment)
         
     Returns:
         Authenticated GSC client or None if error
@@ -502,25 +537,22 @@ def create_gsc_client(credentials_path: str = None, property_url: str = None) ->
         print_colored("Cannot create GSC client: Google API libraries not installed", Colors.RED)
         return None
     
-    # Use helper functions as fallback
-    if not credentials_path:
-        credentials = get_gsc_credentials()
-        if not credentials:
-            print_colored("GSC credentials not found", Colors.YELLOW)
-            print_colored("Add GSC_CREDENTIALS to Secrets or upload credentials file", Colors.BLUE)
-            return None
-        # Save credentials to temp file if from secrets
-        credentials_path = "data/temp_gsc_credentials.json"
-        import json
-        with open(credentials_path, 'w') as f:
-            json.dump(credentials, f)
+    # Check if credentials are available
+    credentials = get_gsc_credentials()
+    if not credentials:
+        print_colored("GSC credentials not found", Colors.YELLOW)
+        print_colored("Add GSC_CREDENTIALS to Secrets or upload credentials file", Colors.BLUE)
+        return None
     
+    # Use provided property URL or get from environment
     if not property_url:
         property_url = get_property_url()
     
-    client = GoogleSearchConsoleClient()
+    # Create client with credentials path if provided
+    client = GoogleSearchConsoleClient(credentials_path=credentials_path)
     
-    if client.authenticate(credentials_path, property_url):
+    # Authenticate using the new method
+    if client.authenticate(property_url):
         return client
     else:
         return None

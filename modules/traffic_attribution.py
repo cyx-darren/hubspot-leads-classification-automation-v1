@@ -72,6 +72,7 @@ class LeadAttributionAnalyzer:
         self.gsc_client = gsc_client
         self.gsc_data = None
         self.gsc_property_url = gsc_property_url
+        self.gsc_keywords_df = None
         
         # Setup GSC client if credentials provided
         if use_gsc and gsc_credentials_path:
@@ -92,6 +93,21 @@ class LeadAttributionAnalyzer:
         
         # Comparison mode for testing different attribution methods
         self.compare_methods = compare_methods
+    
+    def check_gsc_availability(self):
+        """Check if GSC is configured and available"""
+        has_creds = bool(os.environ.get('GSC_CREDENTIALS')) or os.path.exists('data/gsc_credentials.json')
+        has_url = bool(os.environ.get('GSC_PROPERTY_URL'))
+        
+        if has_creds and has_url:
+            print_colored("✓ GSC configuration detected - will attempt to use real search data", Colors.GREEN)
+            return True
+        else:
+            if not has_creds:
+                print_colored("ℹ️  GSC credentials not found - using CSV data only", Colors.BLUE)
+            if not has_url:
+                print_colored("ℹ️  GSC_PROPERTY_URL not set - using CSV data only", Colors.BLUE)
+            return False
 
     def load_data(self, 
                  leads_path="./output/leads_with_products.csv", 
@@ -164,6 +180,34 @@ class LeadAttributionAnalyzer:
         # Show traffic data summary
         summary = traffic_data['summary']
         print_colored(f"✓ Traffic data summary: {summary['seo_keywords']} SEO, {summary['ppc_standard_keywords']} PPC standard, {summary['ppc_dynamic_targets']} PPC dynamic", Colors.BLUE)
+
+        # GSC Integration - load real search data if available
+        if self.check_gsc_availability():
+            try:
+                from .gsc_client import GoogleSearchConsoleClient
+                self.gsc_client = GoogleSearchConsoleClient()
+                self.gsc_client.authenticate()
+                
+                # Load recent GSC data
+                from datetime import datetime, timedelta
+                end_date = datetime.now()
+                start_date = end_date - timedelta(days=30)
+                
+                self.gsc_data = self.gsc_client.get_search_queries(start_date, end_date)
+                if self.gsc_data is not None and not self.gsc_data.empty:
+                    print_colored(f"✓ Loaded {len(self.gsc_data)} search queries from GSC", Colors.GREEN)
+                    
+                    # Merge with SEO data for enhanced attribution
+                    self.enhance_seo_data_with_gsc()
+                else:
+                    print_colored("No recent GSC data available", Colors.YELLOW)
+                    self.gsc_data = None
+                
+            except Exception as e:
+                print_colored(f"⚠️  GSC integration failed: {e}", Colors.YELLOW)
+                print_colored("  Continuing with CSV data only", Colors.BLUE)
+                self.gsc_data = None
+                self.gsc_client = None
 
         # Process and clean the data
         self.process_data()
@@ -487,9 +531,9 @@ class LeadAttributionAnalyzer:
         try:
             from .gsc_client import GoogleSearchConsoleClient
             
-            self.gsc_client = GoogleSearchConsoleClient()
+            self.gsc_client = GoogleSearchConsoleClient(credentials_path=credentials_path)
             
-            if self.gsc_client.authenticate(credentials_path, property_url or self.gsc_property_url):
+            if self.gsc_client.authenticate(property_url or self.gsc_property_url):
                 print_colored("✓ GSC client authenticated successfully", Colors.GREEN)
                 self.gsc_property_url = property_url or self.gsc_property_url
             else:
@@ -505,6 +549,37 @@ class LeadAttributionAnalyzer:
             print_colored(f"Error setting up GSC client: {e}", Colors.RED)
             self.gsc_client = None
             self.use_gsc = False
+    
+    def enhance_seo_data_with_gsc(self):
+        """Enhance SEO keywords with actual click data from GSC"""
+        if self.gsc_data is None or self.gsc_data.empty:
+            return
+        
+        print_colored("Enhancing SEO data with real GSC click information...", Colors.BLUE)
+        
+        # Add click data to SEO keywords
+        click_summary = self.gsc_data.groupby('query').agg({
+            'clicks': 'sum',
+            'impressions': 'sum',
+            'position': 'mean'
+        }).reset_index()
+        
+        # Create enhanced keyword list with actual performance
+        self.gsc_keywords_df = click_summary.copy()
+        self.gsc_keywords_df['has_clicks'] = self.gsc_keywords_df['clicks'] > 0
+        self.gsc_keywords_df['keyphrase'] = self.gsc_keywords_df['query']  # For compatibility
+        self.gsc_keywords_df['current_position'] = self.gsc_keywords_df['position']
+        
+        # Add product category mapping
+        self.gsc_keywords_df['product_category'] = self.gsc_keywords_df['query'].apply(
+            self.extract_product_category_from_keyword
+        )
+        
+        print_colored(f"✓ Enhanced with {len(self.gsc_keywords_df)} keywords from GSC", Colors.GREEN)
+        print_colored(f"  - {self.gsc_keywords_df['has_clicks'].sum()} keywords have actual clicks", Colors.GREEN)
+        
+        # Set flag to prioritize GSC data in attribution
+        self.use_gsc = True
     
     def load_gsc_data(self, property_url: str = None, days_back: int = 30) -> pd.DataFrame:
         """Load actual search performance from GSC"""
@@ -897,9 +972,14 @@ class LeadAttributionAnalyzer:
         """Identify traffic from SEO using GSC data first, then CSV fallback"""
         print_colored("Identifying SEO traffic...", Colors.BLUE)
         
-        # First try GSC data (real clicks)
-        if self.gsc_data is not None and not self.gsc_data.empty:
-            print_colored("Using Google Search Console data for SEO attribution (real click data)", Colors.BLUE)
+        # First try enhanced GSC data (real clicks with keyword matching)
+        if self.gsc_keywords_df is not None and not self.gsc_keywords_df.empty:
+            print_colored("Using enhanced GSC data for SEO attribution (real click data)", Colors.BLUE)
+            seo_count = self.attribute_using_enhanced_gsc_data()
+            self._update_data_source_for_seo('gsc_enhanced')
+        # Fall back to raw GSC data
+        elif self.gsc_data is not None and not self.gsc_data.empty:
+            print_colored("Using raw GSC data for SEO attribution (real click data)", Colors.BLUE)
             seo_count = self.attribute_using_gsc_data()
             self._update_data_source_for_seo('gsc_api')
         # Fall back to CSV ranking data
@@ -919,7 +999,7 @@ class LeadAttributionAnalyzer:
             
             # Store current results as primary method
             current_seo_mask = self.leads_df['attributed_source'] == 'SEO'
-            primary_method = 'gsc' if self.gsc_data is not None and not self.gsc_data.empty else 'csv'
+            primary_method = 'gsc' if self.gsc_keywords_df is not None and not self.gsc_keywords_df.empty else 'csv'
             
             self.leads_df.loc[current_seo_mask, f'{primary_method}_attribution'] = 'SEO'
             self.leads_df.loc[current_seo_mask, f'{primary_method}_confidence'] = self.leads_df.loc[current_seo_mask, 'attribution_confidence']
@@ -933,7 +1013,7 @@ class LeadAttributionAnalyzer:
                 secondary_count = self.attribute_using_seo_csv()
                 secondary_method = 'csv'
             else:
-                secondary_count = self.attribute_using_gsc_data()
+                secondary_count = self.attribute_using_enhanced_gsc_data() if self.gsc_keywords_df is not None else self.attribute_using_gsc_data()
                 secondary_method = 'gsc'
             
             # Store secondary results
@@ -1078,6 +1158,121 @@ class LeadAttributionAnalyzer:
         unattributed_count = unattributed_mask.sum()
         if unattributed_count > 0:
             print_colored(f"✓ Identified {seo_count} leads as SEO traffic using GSC data ({seo_count/unattributed_count*100:.1f}% of unattributed)", Colors.GREEN)
+        
+        return seo_count
+
+    def attribute_using_enhanced_gsc_data(self) -> int:
+        """Attribute using enhanced GSC data with click summaries"""
+        if self.gsc_keywords_df is None or self.gsc_keywords_df.empty:
+            print_colored("No enhanced GSC data available for attribution", Colors.YELLOW)
+            return 0
+            
+        # Only consider leads not already attributed
+        unattributed_mask = self.leads_df['attributed_source'] == 'Unknown'
+        seo_count = 0
+
+        print_colored(f"Analyzing {unattributed_mask.sum()} unattributed leads against {len(self.gsc_keywords_df)} enhanced GSC keywords", Colors.BLUE)
+
+        # Loop through unattributed leads
+        for idx, lead in self.leads_df[unattributed_mask].iterrows():
+            lead_keywords = lead.get('extracted_keywords', [])
+            
+            if not lead_keywords:
+                continue
+
+            # Match lead keywords with enhanced GSC data
+            keyword_match_score = 0
+            matched_queries = []
+            total_clicks = 0
+            total_impressions = 0
+            best_position = 100
+            has_actual_clicks = False
+
+            for _, gsc_row in self.gsc_keywords_df.iterrows():
+                gsc_query = str(gsc_row['query']).lower()
+                gsc_clicks = gsc_row['clicks']
+                gsc_impressions = gsc_row['impressions']
+                gsc_position = gsc_row['position']
+                
+                # Prioritize queries with actual clicks
+                if gsc_clicks > 0:
+                    has_actual_clicks = True
+
+                for lead_kw in lead_keywords:
+                    # Use fuzzy matching if available
+                    if FUZZY_AVAILABLE:
+                        similarity = fuzz.token_sort_ratio(lead_kw, gsc_query)
+                    else:
+                        similarity = 100 if lead_kw in gsc_query else 0
+                    
+                    if similarity > 60:  # Match threshold
+                        # Much higher weight for queries with actual clicks
+                        if gsc_clicks > 0:
+                            click_weight = min(100, gsc_clicks * 20)  # Even higher weight for enhanced data
+                            position_bonus = max(0, (20 - gsc_position) * 4)
+                            match_score = (similarity * 0.2) + (click_weight * 0.6) + (position_bonus * 0.2)
+                        else:
+                            # Lower weight for impression-only queries
+                            impression_weight = min(50, gsc_impressions / 100)
+                            position_bonus = max(0, (20 - gsc_position) * 2)
+                            match_score = (similarity * 0.4) + (impression_weight * 0.3) + (position_bonus * 0.3)
+                        
+                        keyword_match_score = max(keyword_match_score, match_score)
+                        matched_queries.append((lead_kw, gsc_query, similarity, gsc_clicks, gsc_position))
+                        total_clicks += gsc_clicks
+                        total_impressions += gsc_impressions
+                        best_position = min(best_position, gsc_position)
+
+            # Calculate enhanced GSC-based confidence score
+            if keyword_match_score > 0:
+                # Base score from keyword matching
+                base_confidence = keyword_match_score
+                
+                # Major boost for actual clicks (real traffic evidence)
+                if has_actual_clicks and total_clicks > 0:
+                    click_confidence_boost = min(50, total_clicks * 10)  # Up to 50 points for clicks
+                    data_quality_bonus = 20  # Bonus for having real click data
+                else:
+                    click_confidence_boost = min(20, total_impressions / 100)  # Lower boost for impressions only
+                    data_quality_bonus = 5
+                
+                # Position quality bonus
+                if best_position <= 3:
+                    position_bonus = 30
+                elif best_position <= 10:
+                    position_bonus = 20
+                elif best_position <= 20:
+                    position_bonus = 10
+                else:
+                    position_bonus = 0
+
+                # Final confidence calculation - much higher for enhanced data
+                confidence_score = base_confidence + click_confidence_boost + position_bonus + data_quality_bonus
+                confidence_score = min(100, confidence_score)
+
+                # Use medium threshold for enhanced GSC data
+                threshold = self.confidence_thresholds['medium']  # 50% threshold
+
+                if confidence_score >= threshold:
+                    self.leads_df.loc[idx, 'attributed_source'] = 'SEO'
+                    self.leads_df.loc[idx, 'attribution_confidence'] = confidence_score
+
+                    # Create detailed attribution description
+                    top_matches = sorted(matched_queries, key=lambda x: x[3], reverse=True)[:3]  # Sort by clicks
+                    matched_queries_str = '; '.join([f"{l}→{g}({c} clicks, pos {p:.1f})" for l, g, s, c, p in top_matches])
+                    
+                    if has_actual_clicks:
+                        detail = f"Enhanced GSC (with clicks): {matched_queries_str} | Total: {total_clicks} clicks, {total_impressions} impr, Best pos: {best_position:.1f}"
+                    else:
+                        detail = f"Enhanced GSC (impressions): {matched_queries_str} | Total: {total_impressions} impr, Best pos: {best_position:.1f}"
+                    
+                    self.leads_df.loc[idx, 'attribution_detail'] = detail
+
+                    seo_count += 1
+
+        unattributed_count = unattributed_mask.sum()
+        if unattributed_count > 0:
+            print_colored(f"✓ Identified {seo_count} leads as SEO traffic using enhanced GSC data ({seo_count/unattributed_count*100:.1f}% of unattributed)", Colors.GREEN)
         
         return seo_count
 
