@@ -15,99 +15,96 @@ def test_gsc_integration():
     print("TESTING GOOGLE SEARCH CONSOLE INTEGRATION")
     print("="*60)
     
-    creds_path = "data/gsc_credentials.json"
+    # Check both file and environment
+    creds_file = "data/gsc_credentials.json"
+    creds_env = os.environ.get('GSC_CREDENTIALS')
+    property_url = os.environ.get('GSC_PROPERTY_URL')
     
-    if os.path.exists(creds_path):
-        print("✓ GSC credentials found - testing integration...")
-        
-        try:
-            from modules.gsc_client import GoogleSearchConsoleClient
-            
-            # Test authentication
-            print("\n1. Testing Authentication:")
-            print("-" * 30)
-            
-            # Try to get property URL from environment or use default
-            property_url = os.environ.get('GSC_PROPERTY_URL', 'https://example.com/')
-            
-            client = GoogleSearchConsoleClient()
-            auth_success = client.authenticate(creds_path, property_url)
-            
-            if auth_success:
-                print("✓ GSC authentication successful")
-                
-                # Test connection
-                print("\n2. Testing Connection:")
-                print("-" * 30)
-                connection_success = client.test_connection()
-                
-                if connection_success:
-                    print("✓ GSC connection test passed")
-                    
-                    # Get data summary
-                    print("\n3. Data Summary:")
-                    print("-" * 30)
-                    summary = client.get_data_summary()
-                    
-                    if summary.get('available'):
-                        print(f"✓ Status: {summary.get('status')}")
-                        print(f"✓ Property: {summary.get('property_url')}")
-                        print(f"✓ Queries (7d): {summary.get('queries_count', 0)}")
-                        print(f"✓ Clicks (7d): {summary.get('total_clicks_7d', 0)}")
-                        print(f"✓ Impressions (7d): {summary.get('total_impressions_7d', 0)}")
-                        print(f"✓ Avg Position (7d): {summary.get('avg_position_7d', 0)}")
-                        
-                        top_queries = summary.get('top_queries', [])
-                        if top_queries:
-                            print(f"✓ Top queries: {', '.join(top_queries[:3])}")
-                        
-                        print("\n4. Sample Data Fetch:")
-                        print("-" * 30)
-                        
-                        # Try to fetch recent data
-                        from datetime import datetime, timedelta
-                        end_date = datetime.now()
-                        start_date = end_date - timedelta(days=7)
-                        
-                        sample_data = client.get_search_queries(start_date, end_date, limit=5)
-                        
-                        if sample_data is not None and not sample_data.empty:
-                            print(f"✓ Sample data retrieved: {len(sample_data)} queries")
-                            print("Sample queries:")
-                            for idx, row in sample_data.head(3).iterrows():
-                                print(f"  - '{row['query']}': {row['clicks']} clicks, pos {row['position']:.1f}")
-                        else:
-                            print("⚠️  No recent data available (normal for new properties)")
-                        
-                        return True
-                    else:
-                        print(f"✗ GSC data not available: {summary.get('error', 'Unknown error')}")
-                        return False
-                else:
-                    print("✗ GSC connection test failed")
-                    return False
-            else:
-                print("✗ GSC authentication failed")
-                print("Check:")
-                print("  - Service account email added to GSC property")
-                print("  - Property URL format (https://example.com/)")
-                print("  - API permissions")
-                return False
-                
-        except ImportError:
-            print("✗ GSC client module not available")
-            print("Google API libraries may not be installed")
-            return False
-        except Exception as e:
-            print(f"✗ GSC integration test error: {e}")
-            return False
-    else:
+    has_credentials = os.path.exists(creds_file) or bool(creds_env)
+    
+    if not has_credentials:
         print("ℹ️  GSC credentials not found - skipping GSC tests")
-        print(f"To enable GSC integration:")
-        print(f"  1. Follow setup guide in data/gsc_setup.md")
-        print(f"  2. Save credentials to {creds_path}")
-        print(f"  3. Re-run tests")
-        return None
+        print("To enable GSC integration:")
+        print("  1. Follow setup guide in data/gsc_setup.md")
+        print("  2. Save credentials to data/gsc_credentials.json")
+        print("     OR add GSC_CREDENTIALS to Replit Secrets")
+        print("  3. Re-run tests")
+        return False
+    
+    # Found credentials
+    if creds_env:
+        print("✓ GSC credentials found in Replit Secrets")
+    else:
+        print("✓ GSC credentials found in file")
+    
+    if not property_url:
+        print("⚠️  GSC_PROPERTY_URL not set in environment")
+        print("  Add your website URL to Replit Secrets as GSC_PROPERTY_URL")
+        return False
+    print(f"✓ GSC property URL: {property_url}")
+    
+    # Test actual connection
+    try:
+        from modules.gsc_client import GoogleSearchConsoleClient
+        from datetime import datetime, timedelta
+        
+        print("\nTesting GSC connection...")
+        client = GoogleSearchConsoleClient()
+        auth_success = client.authenticate(property_url)
+        
+        if not auth_success:
+            print("✗ GSC authentication failed")
+            print("Check:")
+            print("  - Service account email added to GSC property")
+            print("  - Property URL format (https://example.com/)")
+            print("  - API permissions in Google Cloud Console")
+            return False
+        
+        print("✓ GSC authentication successful")
+        
+        # Test connection
+        print("\nTesting connection...")
+        connection_success = client.test_connection()
+        
+        if not connection_success:
+            print("✗ GSC connection test failed")
+            return False
+        
+        print("✓ GSC connection test passed")
+        
+        # Get sample data
+        print("\nFetching sample data...")
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=7)
+        
+        data = client.get_search_queries(start_date, end_date, limit=5)
+        
+        if data is None:
+            print("⚠️  Could not retrieve GSC data")
+            return False
+        
+        print(f"✓ Successfully connected to GSC!")
+        print(f"✓ Retrieved {len(data)} search queries")
+        
+        if not data.empty:
+            print("\nSample queries with clicks:")
+            for _, row in data.head(3).iterrows():
+                print(f"  - '{row['query']}': {row['clicks']} clicks, position {row['position']:.1f}")
+            
+            total_clicks = data['clicks'].sum()
+            print(f"\nTotal clicks from sample: {total_clicks}")
+        else:
+            print("⚠️  No recent data available (normal for new properties)")
+        
+        return True
+        
+    except ImportError:
+        print("✗ GSC client module not available")
+        print("Google API libraries may not be installed")
+        return False
+    except Exception as e:
+        print(f"✗ GSC connection test failed: {e}")
+        return False
 
 def test_attribution():
     print("="*60)
@@ -142,12 +139,21 @@ def test_attribution():
     print("\n2. RUNNING ATTRIBUTION ANALYSIS:")
     print("-" * 40)
     try:
+        # Check if GSC is available
+        use_gsc = bool(os.environ.get('GSC_CREDENTIALS')) and bool(os.environ.get('GSC_PROPERTY_URL'))
+        
+        if use_gsc:
+            print("✓ GSC integration enabled for enhanced attribution")
+        else:
+            print("ℹ️  Using CSV data only (GSC not configured)")
+        
         result = analyze_traffic_attribution(
             leads_path="output/leads_with_products.csv",
             seo_csv_path="data/Feb2025-SEO.csv",
             ppc_standard_path="data/When your ads showed Custom and Corporate Gifts and Lanyards (1).csv",
             ppc_dynamic_path="data/When your ads showed Dynamic Search Ads (1).csv",
             output_path="output/leads_with_attribution.csv",
+            use_gsc=use_gsc,
             generate_reports=True
         )
         
