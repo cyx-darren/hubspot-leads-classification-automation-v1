@@ -1,27 +1,28 @@
 ======================================================================
 TRAFFIC ATTRIBUTION ANALYSIS REPORT
 ======================================================================
-Generated: 2025-06-15 14:17:52
+Generated: 2025-06-16 03:41:09
 Total Leads Analyzed: 121
 
 1. ATTRIBUTION BREAKDOWN BY SOURCE
 ----------------------------------------
-SEO            :   61 leads ( 50.4%)
+SEO            :   60 leads ( 49.6%)
 Direct         :   37 leads ( 30.6%)
 Referral       :   23 leads ( 19.0%)
+PPC            :    1 leads (  0.8%)
 
 Total Attributed: 121 leads
 
 2. CONFIDENCE LEVEL DISTRIBUTION
 ----------------------------------------
-High      :   97 leads ( 80.2%)
+High      :   98 leads ( 81.0%)
 Low       :   15 leads ( 12.4%)
-Medium    :    9 leads (  7.4%)
+Medium    :    8 leads (  6.6%)
 
 3. TOP PRODUCTS BY SOURCE
 ----------------------------------------
 
-SEO Traffic (61 leads):
+SEO Traffic (60 leads):
   - Lanyards (With Printing): 11 mentions
   - Custom Enamel & Lapel Pin Badges in Singapore: 3 mentions
   - Custom Paper Bag Printing in Singapore: 3 mentions
@@ -36,6 +37,9 @@ Direct Traffic (37 leads):
   - A4 Canvas Tote Bag: 1 mentions
 
 Referral Traffic (23 leads):
+  - No specific products identified
+
+PPC Traffic (1 leads):
   - No specific products identified
 
 4. TIME PATTERNS
@@ -57,14 +61,15 @@ Timestamp Analysis (121 leads with valid timestamps):
 
 5. DATA SOURCE BREAKDOWN
 ----------------------------------------
-gsc_enhanced   :   61 leads ( 50.4%)
+gsc_enhanced   :   60 leads ( 49.6%)
 customer_db    :   37 leads ( 30.6%)
 pattern        :   23 leads ( 19.0%)
+ga4_ppc        :    1 leads (  0.8%)
 
 6. KEY INSIGHTS
 ----------------------------------------
-• Primary traffic source: SEO (61 leads)
-• High confidence attributions: 97 leads
+• Primary traffic source: SEO (60 leads)
+• High confidence attributions: 98 leads
 • Attribution quality: 87.6% medium+ confidence
 • Weekend vs Weekday: 31 weekend, 90 weekday leads
 
@@ -73,4 +78,4 @@ pattern        :   23 leads ( 19.0%)
 
 7. RECOMMENDATIONS
 ----------------------------------------
-• Consider diversifying traffic sources - SEO dominates (50.4%)
+• Consider diversifying traffic sources - SEO dominates (49.6%)
