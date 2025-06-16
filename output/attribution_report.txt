@@ -1,0 +1,77 @@
+======================================================================
+TRAFFIC ATTRIBUTION ANALYSIS REPORT
+======================================================================
+Generated: 2025-06-16 11:04:41
+Total Leads Analyzed: 121
+
+1. ATTRIBUTION BREAKDOWN BY SOURCE
+----------------------------------------
+SEO            :   83 leads ( 68.6%)
+Referral       :   36 leads ( 29.8%)
+Direct         :    1 leads (  0.8%)
+PPC            :    1 leads (  0.8%)
+
+Total Attributed: 121 leads
+
+2. CONFIDENCE LEVEL DISTRIBUTION
+----------------------------------------
+High      :   90 leads ( 74.4%)
+Low       :   19 leads ( 15.7%)
+Medium    :   12 leads (  9.9%)
+
+3. TOP PRODUCTS BY SOURCE
+----------------------------------------
+
+SEO Traffic (83 leads):
+  - Lanyards (With Printing): 20 mentions
+  - Custom Enamel & Lapel Pin Badges in Singapore: 7 mentions
+  - Custom Paper Bag Printing in Singapore: 4 mentions
+  - Corporate Gift Luggage Tag With Custom Logo: 4 mentions
+  - A4 Canvas Tote Bag: 4 mentions
+
+Referral Traffic (36 leads):
+  - No specific products identified
+
+Direct Traffic (1 leads):
+  - No specific products identified
+
+PPC Traffic (1 leads):
+  - No specific products identified
+
+4. TIME PATTERNS
+----------------------------------------
+Day of Week Distribution:
+  Monday    :  15 leads (12.4%)
+  Tuesday   :  20 leads (16.5%)
+  Wednesday :  17 leads (14.0%)
+  Thursday  :  21 leads (17.4%)
+  Friday    :  17 leads (14.0%)
+  Saturday  :  30 leads (24.8%)
+  Sunday    :   1 leads ( 0.8%)
+
+Timestamp Analysis (121 leads with valid timestamps):
+  Date Range: 2025-02-01 to 2025-02-28
+  Peak Hour: 0:00 (28 leads)
+  Business Hours (9-17): 18 leads (14.9%)
+  After Hours: 103 leads (85.1%)
+
+5. DATA SOURCE BREAKDOWN
+----------------------------------------
+gsc_enhanced   :   83 leads ( 68.6%)
+pattern        :   36 leads ( 29.8%)
+quickbooks_cached:    1 leads (  0.8%)
+ga4_ppc        :    1 leads (  0.8%)
+
+6. KEY INSIGHTS
+----------------------------------------
+• Primary traffic source: SEO (83 leads)
+• High confidence attributions: 90 leads
+• Attribution quality: 84.3% medium+ confidence
+• Weekend vs Weekday: 31 weekend, 90 weekday leads
+
+6. DATA LIMITATIONS
+----------------------------------------
+
+7. RECOMMENDATIONS
+----------------------------------------
+• Consider diversifying traffic sources - SEO dominates (68.6%)
