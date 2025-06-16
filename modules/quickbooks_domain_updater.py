@@ -41,33 +41,33 @@ def print_colored(text: str, color: str):
 
 def convert_qb_date_to_datetime(qb_date_str: str):
     """Convert QuickBooks date string to Python datetime object
-    
+
     Args:
         qb_date_str: QuickBooks date in ISO format (e.g., "2024-01-15T10:30:00-05:00")
-    
+
     Returns:
         datetime object or None if parsing fails
     """
     if not qb_date_str:
         return None
-    
+
     try:
         # Parse ISO format date
         from datetime import datetime
         import re
-        
+
         # Handle timezone format variations
         # QB returns formats like: "2024-01-15T10:30:00-05:00" or "2024-01-15T10:30:00Z"
-        
+
         if qb_date_str.endswith('Z'):
             # UTC timezone
             dt = datetime.fromisoformat(qb_date_str.replace('Z', '+00:00'))
         else:
             # Handle timezone offset
             dt = datetime.fromisoformat(qb_date_str)
-        
+
         return dt
-        
+
     except Exception as e:
         print_colored(f"Warning: Could not parse date '{qb_date_str}': {e}", 'YELLOW')
         return None
@@ -75,10 +75,10 @@ def convert_qb_date_to_datetime(qb_date_str: str):
 
 def format_qb_date_for_display(qb_date_str: str) -> str:
     """Format QuickBooks date for human-readable display
-    
+
     Args:
         qb_date_str: QuickBooks date in ISO format
-    
+
     Returns:
         Formatted date string (e.g., "2024-01-15 10:30 AM")
     """
@@ -174,7 +174,7 @@ def get_access_token():
                 print("2. Sign in and reauthorize your app")
                 print("3. Copy the new Refresh Token")
                 print("4. Update QUICKBOOKS_REFRESH_TOKEN in Replit Secrets")
-                print("5. Also update QUICKBOOKS_COMPANY_ID if it changed")
+                print("4. Also update QUICKBOOKS_COMPANY_ID if it changed")
                 return None
 
         response.raise_for_status()
@@ -253,29 +253,29 @@ def extract_customer_domains(customers):
 def extract_customer_details(customers):
     """Extract detailed customer information including creation dates"""
     customer_details = []
-    
+
     for customer in customers:
         # Basic customer info
         customer_id = customer.get('Id', '')
         name = customer.get('Name', '')
         company_name = customer.get('CompanyName', '')
-        
+
         # Email information
         email = customer.get('PrimaryEmailAddr', {}).get('Address', '')
-        
+
         # Creation date from metadata
         metadata = customer.get('MetaData', {})
         create_time = metadata.get('CreateTime', '')
         last_updated = metadata.get('LastUpdatedTime', '')
-        
+
         # Alternative creation date field
         if not create_time:
             create_time = customer.get('CreateTime', '')
-        
+
         # Only include customers with email addresses
         if email and '@' in email:
             domain = email.split('@')[1].lower()
-            
+
             customer_info = {
                 'customer_id': customer_id,
                 'name': name,
@@ -285,15 +285,15 @@ def extract_customer_details(customers):
                 'create_time': create_time,
                 'last_updated': last_updated
             }
-            
+
             customer_details.append(customer_info)
-    
+
     return customer_details
 
 
 def get_customer_with_dates():
     """Get customers with email addresses and creation dates
-    
+
     Returns:
         List[Dict]: List of customers with email and creation date
         Format: [{'email': 'user@domain.com', 'created_date': '2024-01-15T10:30:00-05:00'}, ...]
@@ -301,22 +301,22 @@ def get_customer_with_dates():
     customers = get_quickbooks_customers()
     if not customers:
         return []
-    
+
     customers_with_dates = []
-    
+
     for customer in customers:
         # Get email address
         email = customer.get('PrimaryEmailAddr', {}).get('Address', '')
-        
+
         if email and '@' in email:
             # Get creation date from metadata (primary source)
             metadata = customer.get('MetaData', {})
             create_time = metadata.get('CreateTime', '')
-            
+
             # Fallback to alternative field if metadata is empty
             if not create_time:
                 create_time = customer.get('CreateTime', '')
-            
+
             # Only include customers with both email and creation date
             if create_time:
                 customers_with_dates.append({
@@ -326,9 +326,141 @@ def get_customer_with_dates():
                     'name': customer.get('Name', ''),
                     'company_name': customer.get('CompanyName', '')
                 })
-    
+
     print_colored(f"Retrieved {len(customers_with_dates)} customers with creation dates", 'GREEN')
     return customers_with_dates
+
+
+def load_all_customers_for_attribution():
+    """Load all customers once and create email->creation_date mapping for attribution
+
+    Returns:
+        Dict[str, str]: Dictionary mapping email addresses to creation dates
+        Format: {'email@domain.com': '2024-01-15T10:30:00-05:00', ...}
+        Customers without creation dates have None as value
+    """
+    import sys
+
+    print_colored("🔄 Loading ALL customers for attribution analysis...", 'BLUE')
+    print_colored("📊 This optimizes performance by loading customer data once", 'BLUE')
+
+    # Get all customers from QuickBooks (single API call)
+    customers = get_quickbooks_customers()
+
+    if not customers:
+        print_colored("No customers retrieved from QuickBooks", 'YELLOW')
+        return {}
+
+    print_colored(f"📧 Processing {len(customers)} customer records for attribution lookup...", 'BLUE')
+
+    # Create email -> creation_date mapping
+    customer_attribution_map = {}
+    emails_processed = 0
+    emails_with_dates = 0
+    emails_without_dates = 0
+    duplicate_emails = 0
+
+    for i, customer in enumerate(customers):
+        # Show progress every 1000 customers
+        if i > 0 and i % 1000 == 0:
+            progress_pct = (i / len(customers)) * 100
+            print_colored(f"   Processing: {i}/{len(customers)} ({progress_pct:.1f}%)", 'BLUE')
+
+        # Get email address
+        email = customer.get('PrimaryEmailAddr', {}).get('Address', '')
+
+        if email and '@' in email:
+            email_clean = email.lower().strip()
+            emails_processed += 1
+
+            # Check for duplicate emails
+            if email_clean in customer_attribution_map:
+                duplicate_emails += 1
+                # Keep the customer with the earlier creation date if both have dates
+                existing_date = customer_attribution_map[email_clean]
+                current_date = None
+
+                # Get creation date from current customer
+                metadata = customer.get('MetaData', {})
+                create_time = metadata.get('CreateTime', '')
+                if not create_time:
+                    create_time = customer.get('CreateTime', '')
+
+                if create_time:
+                    current_date = create_time
+
+                # Keep the earlier date, or the one with a date if the other doesn't have one
+                if existing_date is None and current_date is not None:
+                    customer_attribution_map[email_clean] = current_date
+                elif existing_date is not None and current_date is not None:
+                    # Compare dates to keep the earlier one
+                    try:
+                        existing_dt = convert_qb_date_to_datetime(existing_date)
+                        current_dt = convert_qb_date_to_datetime(current_date)
+                        if existing_dt and current_dt and current_dt < existing_dt:
+                            customer_attribution_map[email_clean] = current_date
+                    except:
+                        pass  # Keep existing if comparison fails
+
+                continue
+
+            # Get creation date from metadata (primary source)
+            metadata = customer.get('MetaData', {})
+            create_time = metadata.get('CreateTime', '')
+
+            # Fallback to alternative field if metadata is empty
+            if not create_time:
+                create_time = customer.get('CreateTime', '')
+
+            # Store in mapping
+            if create_time:
+                customer_attribution_map[email_clean] = create_time
+                emails_with_dates += 1
+            else:
+                customer_attribution_map[email_clean] = None
+                emails_without_dates += 1
+
+    # Calculate memory usage
+    try:
+        map_size_bytes = sys.getsizeof(customer_attribution_map)
+        for key, value in customer_attribution_map.items():
+            map_size_bytes += sys.getsizeof(key)
+            if value:
+                map_size_bytes += sys.getsizeof(value)
+
+        map_size_kb = map_size_bytes / 1024
+        map_size_mb = map_size_kb / 1024
+
+        if map_size_mb >= 1:
+            memory_str = f"{map_size_mb:.2f} MB"
+        else:
+            memory_str = f"{map_size_kb:.2f} KB"
+    except:
+        memory_str = "unknown"
+
+    # Log summary
+    print_colored("✅ Customer attribution mapping complete:", 'GREEN')
+    print_colored(f"  📊 Total unique emails: {len(customer_attribution_map)}", 'GREEN')
+    print_colored(f"  📅 With creation dates: {emails_with_dates}", 'GREEN')
+    print_colored(f"  ❓ Without creation dates: {emails_without_dates}", 'YELLOW')
+
+    if duplicate_emails > 0:
+        print_colored(f"  🔄 Duplicate emails resolved: {duplicate_emails}", 'BLUE')
+
+    print_colored(f"  💾 Memory usage: {memory_str}", 'BLUE')
+
+    # Show some sample entries for verification
+    if len(customer_attribution_map) > 0:
+        print_colored("📋 Sample entries:", 'BLUE')
+        sample_count = min(3, len(customer_attribution_map))
+        for i, (email, date) in enumerate(list(customer_attribution_map.items())[:sample_count]):
+            date_display = date if date else "No creation date"
+            print_colored(f"  • {email}: {date_display}", 'BLUE')
+
+        if len(customer_attribution_map) > 3:
+            print_colored(f"  ... and {len(customer_attribution_map) - 3} more", 'BLUE')
+
+    return customer_attribution_map
 
 
 def get_quickbooks_customers():
@@ -354,7 +486,7 @@ def get_quickbooks_customers():
         batch_count = 0
         while True:
             batch_count += 1
-            
+
             # Query with pagination
             query = f"SELECT * FROM Customer MAXRESULTS {max_results} STARTPOSITION {start_position}"
             url = f"{base_url}/query?query={query}"
@@ -376,7 +508,7 @@ def get_quickbooks_customers():
 
             # Enhanced progress messages with percentage
             current_count = len(all_customers)
-            
+
             # Estimate total based on batch size (rough estimate for progress)
             if current_count < 1000:
                 estimated_total = "~1000+"
@@ -384,7 +516,7 @@ def get_quickbooks_customers():
                 estimated_total = "~3000+"
             else:
                 estimated_total = "~5000+"
-            
+
             print_colored(
                 f"  📥 Batch {batch_count}: +{len(batch_customers)} customers | Total: {current_count} (estimated {estimated_total})",
                 'BLUE')
@@ -475,7 +607,7 @@ def save_customer_details_to_csv(customer_details: List[Dict], filename: str):
                 fieldnames = ['customer_id', 'name', 'company_name', 'email', 'domain', 'create_time', 'last_updated']
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 writer.writeheader()
-                
+
                 for customer in customer_details:
                     writer.writerow(customer)
 
@@ -525,7 +657,7 @@ def main():
 
     # Extract new domains
     new_domains = extract_customer_domains(customers)
-    
+
     # Extract detailed customer information
     customer_details = extract_customer_details(customers)
 
@@ -535,7 +667,7 @@ def main():
 
     # Save merged domains
     save_domains_to_csv(all_domains, filename)
-    
+
     # Save detailed customer information
     customer_details_filename = './data/quickbooks_customers.csv'
     save_customer_details_to_csv(customer_details, customer_details_filename)
@@ -549,7 +681,7 @@ def main():
         print("New domains:")
         for domain in sorted(new_domains - existing_domains):
             print(f"  + {domain}")
-    
+
     # Show some sample creation dates
     if customer_details:
         print_colored(f"\nSample customer creation dates:", 'BLUE')

@@ -293,66 +293,64 @@ class LeadAttributionAnalyzer:
             bool: True if customer existed before inquiry date, False otherwise
         """
         try:
-            # Import QuickBooks functionality
-            from modules.quickbooks_domain_updater import get_customer_with_dates, convert_qb_date_to_datetime
+            # Use optimized customer loading if not already loaded
+            if not hasattr(self, 'customer_attribution_map'):
+                from modules.quickbooks_domain_updater import load_all_customers_for_attribution, convert_qb_date_to_datetime
+                
+                print_colored("🚀 Loading customers for attribution (one-time setup)...", Colors.BLUE)
+                self.customer_attribution_map = load_all_customers_for_attribution()
+                self.convert_qb_date_func = convert_qb_date_to_datetime
             
-            print_colored(f"🔍 Verifying customer status: {email} (inquiry: {inquiry_date.strftime('%Y-%m-%d')})", Colors.BLUE)
-            
-            # Get customers with creation dates from QuickBooks
-            customers_with_dates = get_customer_with_dates()
-            
-            if not customers_with_dates:
-                print_colored("No customer data retrieved from QuickBooks", Colors.YELLOW)
+            if not self.customer_attribution_map:
+                print_colored("No customer data available for attribution", Colors.YELLOW)
                 return False
             
             # Normalize email for comparison
             email_to_check = email.lower().strip()
             
-            # Look for matching customer
-            for customer in customers_with_dates:
-                customer_email = customer.get('email', '').lower().strip()
-                
-                if customer_email == email_to_check:
-                    # Found matching customer - check creation date
-                    creation_date_str = customer.get('created_date', '')
-                    
-                    if not creation_date_str:
-                        print_colored(f"Customer {email} found but no creation date available", Colors.YELLOW)
-                        return False
-                    
-                    # Convert QuickBooks date to datetime
-                    creation_date = convert_qb_date_to_datetime(creation_date_str)
-                    
-                    if creation_date is None:
-                        print_colored(f"Could not parse creation date for customer {email}: {creation_date_str}", Colors.YELLOW)
-                        return False
-                    
-                    # Ensure both dates are timezone-aware for comparison
-                    from datetime import timezone
-                    
-                    if inquiry_date.tzinfo is None:
-                        inquiry_date = inquiry_date.replace(tzinfo=timezone.utc)
-                    
-                    if creation_date.tzinfo is None:
-                        creation_date = creation_date.replace(tzinfo=timezone.utc)
-                    
-                    # Check if customer was created before inquiry
-                    is_existing = creation_date < inquiry_date
-                    
-                    time_diff = inquiry_date - creation_date
-                    print_colored(
-                        f"Customer {email}: Created {creation_date.strftime('%Y-%m-%d %H:%M')}, "
-                        f"Inquiry {inquiry_date.strftime('%Y-%m-%d %H:%M')}, "
-                        f"Gap: {time_diff.days} days, "
-                        f"Existing: {is_existing}", 
-                        Colors.GREEN if is_existing else Colors.BLUE
-                    )
-                    
-                    return is_existing
+            print_colored(f"🔍 Checking customer status: {email_to_check} (inquiry: {inquiry_date.strftime('%Y-%m-%d %H:%M')})", Colors.BLUE)
             
-            # Customer not found in QuickBooks
-            print_colored(f"Customer {email} not found in QuickBooks", Colors.BLUE)
-            return False
+            # Look up customer in the pre-loaded map
+            if email_to_check not in self.customer_attribution_map:
+                print_colored(f"Customer {email_to_check} not found in QuickBooks", Colors.BLUE)
+                return False
+            
+            # Get creation date from map
+            creation_date_str = self.customer_attribution_map[email_to_check]
+            
+            if not creation_date_str:
+                print_colored(f"Customer {email_to_check} found but no creation date available", Colors.YELLOW)
+                return False
+            
+            # Convert QuickBooks date to datetime
+            creation_date = self.convert_qb_date_func(creation_date_str)
+            
+            if creation_date is None:
+                print_colored(f"Could not parse creation date for customer {email_to_check}: {creation_date_str}", Colors.YELLOW)
+                return False
+            
+            # Ensure both dates are timezone-aware for comparison
+            from datetime import timezone
+            
+            if inquiry_date.tzinfo is None:
+                inquiry_date = inquiry_date.replace(tzinfo=timezone.utc)
+            
+            if creation_date.tzinfo is None:
+                creation_date = creation_date.replace(tzinfo=timezone.utc)
+            
+            # Check if customer was created before inquiry
+            is_existing = creation_date < inquiry_date
+            
+            time_diff = inquiry_date - creation_date
+            print_colored(
+                f"✓ {email_to_check}: Created {creation_date.strftime('%Y-%m-%d %H:%M')}, "
+                f"Inquiry {inquiry_date.strftime('%Y-%m-%d %H:%M')}, "
+                f"Gap: {time_diff.days} days, "
+                f"Existing: {is_existing}", 
+                Colors.GREEN if is_existing else Colors.BLUE
+            )
+            
+            return is_existing
             
         except ImportError:
             print_colored("QuickBooks module not available for customer checking", Colors.YELLOW)
