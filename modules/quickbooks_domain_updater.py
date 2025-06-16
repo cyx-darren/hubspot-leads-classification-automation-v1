@@ -39,6 +39,55 @@ def print_colored(text: str, color: str):
     print(f"{colors.get(color, '')}{text}{colors.get('ENDC', '')}")
 
 
+def convert_qb_date_to_datetime(qb_date_str: str):
+    """Convert QuickBooks date string to Python datetime object
+    
+    Args:
+        qb_date_str: QuickBooks date in ISO format (e.g., "2024-01-15T10:30:00-05:00")
+    
+    Returns:
+        datetime object or None if parsing fails
+    """
+    if not qb_date_str:
+        return None
+    
+    try:
+        # Parse ISO format date
+        from datetime import datetime
+        import re
+        
+        # Handle timezone format variations
+        # QB returns formats like: "2024-01-15T10:30:00-05:00" or "2024-01-15T10:30:00Z"
+        
+        if qb_date_str.endswith('Z'):
+            # UTC timezone
+            dt = datetime.fromisoformat(qb_date_str.replace('Z', '+00:00'))
+        else:
+            # Handle timezone offset
+            dt = datetime.fromisoformat(qb_date_str)
+        
+        return dt
+        
+    except Exception as e:
+        print_colored(f"Warning: Could not parse date '{qb_date_str}': {e}", 'YELLOW')
+        return None
+
+
+def format_qb_date_for_display(qb_date_str: str) -> str:
+    """Format QuickBooks date for human-readable display
+    
+    Args:
+        qb_date_str: QuickBooks date in ISO format
+    
+    Returns:
+        Formatted date string (e.g., "2024-01-15 10:30 AM")
+    """
+    dt = convert_qb_date_to_datetime(qb_date_str)
+    if dt:
+        return dt.strftime('%Y-%m-%d %I:%M %p')
+    return qb_date_str
+
+
 def get_access_token():
     """Get access token using refresh token"""
     import datetime
@@ -240,6 +289,46 @@ def extract_customer_details(customers):
             customer_details.append(customer_info)
     
     return customer_details
+
+
+def get_customer_with_dates():
+    """Get customers with email addresses and creation dates
+    
+    Returns:
+        List[Dict]: List of customers with email and creation date
+        Format: [{'email': 'user@domain.com', 'created_date': '2024-01-15T10:30:00-05:00'}, ...]
+    """
+    customers = get_quickbooks_customers()
+    if not customers:
+        return []
+    
+    customers_with_dates = []
+    
+    for customer in customers:
+        # Get email address
+        email = customer.get('PrimaryEmailAddr', {}).get('Address', '')
+        
+        if email and '@' in email:
+            # Get creation date from metadata (primary source)
+            metadata = customer.get('MetaData', {})
+            create_time = metadata.get('CreateTime', '')
+            
+            # Fallback to alternative field if metadata is empty
+            if not create_time:
+                create_time = customer.get('CreateTime', '')
+            
+            # Only include customers with both email and creation date
+            if create_time:
+                customers_with_dates.append({
+                    'email': email.lower().strip(),
+                    'created_date': create_time,
+                    'customer_id': customer.get('Id', ''),
+                    'name': customer.get('Name', ''),
+                    'company_name': customer.get('CompanyName', '')
+                })
+    
+    print_colored(f"Retrieved {len(customers_with_dates)} customers with creation dates", 'GREEN')
+    return customers_with_dates
 
 
 def get_quickbooks_customers():
