@@ -1136,17 +1136,28 @@ class LeadAttributionAnalyzer:
         import sys
         
         cache_load_start = time.time()
+        customer_cache = {}
+        convert_qb_date_func = None
+        cache_load_failed = False
         
-        # Load customer cache ONCE at the beginning
+        # Load customer cache ONCE at the beginning with comprehensive error handling
         try:
+            print_colored("🔄 Attempting to load customer cache for attribution...", Colors.BLUE)
             from modules.quickbooks_domain_updater import load_all_customers_for_attribution, convert_qb_date_to_datetime
+            
+            # Attempt to load customer cache
             customer_cache = load_all_customers_for_attribution()
+            convert_qb_date_func = convert_qb_date_to_datetime
+            
+            # Validate the cache was loaded successfully
+            if customer_cache is None:
+                raise ValueError("Customer cache loading returned None")
             
             # Calculate cache loading time
             cache_load_time = time.time() - cache_load_start
             print_colored(f"⏱️  Customer cache loaded in {cache_load_time:.2f} seconds", Colors.GREEN)
             
-            # Calculate memory usage of customer cache
+            # Calculate memory usage of customer cache with error handling
             try:
                 cache_size_bytes = sys.getsizeof(customer_cache)
                 for key, value in customer_cache.items():
@@ -1156,19 +1167,44 @@ class LeadAttributionAnalyzer:
                 
                 cache_size_mb = cache_size_bytes / (1024 * 1024)
                 print_colored(f"💾 Customer cache using approximately {cache_size_mb:.2f} MB of memory", Colors.GREEN)
+            except MemoryError as e:
+                print_colored(f"⚠️  Memory error during cache size calculation: {e}", Colors.YELLOW)
+                print_colored("Cache will still be used for attribution", Colors.BLUE)
             except Exception as e:
                 print_colored(f"Could not calculate memory usage: {e}", Colors.YELLOW)
             
-            print_colored(f"Using pre-loaded cache of {len(customer_cache)} customers for attribution", Colors.BLUE)
-        except ImportError:
-            print_colored("QuickBooks module not available - continuing without customer data", Colors.YELLOW)
+            print_colored(f"✅ Using pre-loaded cache of {len(customer_cache)} customers for attribution", Colors.GREEN)
+            
+        except ImportError as e:
+            print_colored(f"❌ QuickBooks module import failed: {e}", Colors.RED)
+            print_colored("📝 Logging error and aborting customer cache loading", Colors.YELLOW)
+            print_colored("🔄 Attribution will continue without customer data", Colors.BLUE)
             customer_cache = {}
+            cache_load_failed = True
+            
+        except MemoryError as e:
+            print_colored(f"❌ Memory error during customer cache creation: {e}", Colors.RED)
+            print_colored("📝 Insufficient memory to create customer cache", Colors.YELLOW)
+            print_colored("🔄 Attribution will continue without customer data", Colors.BLUE)
+            customer_cache = {}
+            cache_load_failed = True
+            
         except Exception as e:
-            print_colored(f"Error loading customer cache: {e}", Colors.YELLOW)
+            print_colored(f"❌ Critical error loading customer cache: {e}", Colors.RED)
+            print_colored("📝 Logging error and aborting customer cache loading", Colors.YELLOW)
+            print_colored("🔄 Attribution will continue without customer data", Colors.BLUE)
             customer_cache = {}
+            cache_load_failed = True
 
-        if not customer_cache:
-            print_colored("No customer data available for direct traffic attribution", Colors.YELLOW)
+        # Handle empty cache scenario
+        if not customer_cache and not cache_load_failed:
+            print_colored("⚠️  Customer cache is empty - no customers found in QuickBooks", Colors.YELLOW)
+            print_colored("🔄 All leads will be treated as non-customers for direct traffic attribution", Colors.BLUE)
+            print_colored("📊 Attribution will continue with other traffic sources", Colors.BLUE)
+            return
+        elif cache_load_failed:
+            print_colored("💡 Direct traffic attribution disabled due to cache loading failure", Colors.YELLOW)
+            print_colored("📊 Attribution will continue with SEO, PPC, and Referral sources", Colors.BLUE)
             return
 
         direct_count = 0
@@ -1181,98 +1217,155 @@ class LeadAttributionAnalyzer:
         
         print_colored(f"🚀 Starting to process {total_leads} leads using cached data...", Colors.BLUE)
 
-        # Process each lead using cached customer data
+        # Process each lead using cached customer data with comprehensive error handling
+        cache_lookup_errors = 0
+        successful_cache_lookups = 0
+        
         for idx, lead in self.leads_df.iterrows():
-            email = lead.get('email', '')
-            inquiry_timestamp = lead.get('first_inquiry_timestamp')
-            
-            # Skip if no email or timestamp
-            if not email or pd.isna(inquiry_timestamp):
-                continue
-            
-            # Normalize email for comparison
-            email_to_check = email.lower().strip()
-            
-            # Check if email exists in customer_cache dictionary
-            if email_to_check not in customer_cache:
-                # If email not in cache, treat as 'not a customer'
-                continue
-            
-            # Get creation date from cache
-            creation_date_str = customer_cache[email_to_check]
-            
-            if not creation_date_str:
-                # Customer exists but no creation date available
-                continue
-            
-            # Log checking against cached data
-            print_colored(f"Checking {email_to_check} against cached data: customer since {creation_date_str}", Colors.BLUE)
-            
             try:
-                # Convert QuickBooks date to datetime
-                creation_date = convert_qb_date_to_datetime(creation_date_str)
+                email = lead.get('email', '')
+                inquiry_timestamp = lead.get('first_inquiry_timestamp')
                 
-                if creation_date is None:
-                    print_colored(f"Could not parse creation date for customer {email_to_check}: {creation_date_str}", Colors.YELLOW)
+                # Skip if no email or timestamp
+                if not email or pd.isna(inquiry_timestamp):
                     continue
                 
-                # Handle the timezone issue - ensure consistent timezone comparison
-                from datetime import timezone
+                # Normalize email for comparison with error handling
+                try:
+                    email_to_check = email.lower().strip()
+                except (AttributeError, TypeError) as e:
+                    print_colored(f"⚠️  Email normalization failed for lead {idx}: {e}", Colors.YELLOW)
+                    continue
                 
-                # Make inquiry_timestamp timezone-aware if it isn't already
-                if inquiry_timestamp.tzinfo is None:
-                    inquiry_timestamp = inquiry_timestamp.replace(tzinfo=timezone.utc)
-                
-                # Make creation_date timezone-aware if it isn't already
-                if creation_date.tzinfo is None:
-                    creation_date = creation_date.replace(tzinfo=timezone.utc)
-                
-                # Compare customer_cache[email] with lead inquiry date
-                is_existing_customer = creation_date < inquiry_timestamp
-                
-                time_diff = inquiry_timestamp - creation_date
-                print_colored(
-                    f"✓ {email_to_check}: Created {creation_date.strftime('%Y-%m-%d %H:%M')}, "
-                    f"Inquiry {inquiry_timestamp.strftime('%Y-%m-%d %H:%M')}, "
-                    f"Gap: {time_diff.days} days, "
-                    f"Existing: {is_existing_customer}", 
-                    Colors.GREEN if is_existing_customer else Colors.BLUE
-                )
-                
-                if is_existing_customer:
-                    # Customer existed BEFORE inquiry - this is genuine direct traffic
-                    inquiry_date_str = inquiry_timestamp.strftime('%Y-%m-%d %H:%M')
-                    self.leads_df.loc[idx, 'attributed_source'] = 'Direct'
-                    self.leads_df.loc[idx, 'attribution_confidence'] = 95
-                    self.leads_df.loc[idx, 'attribution_detail'] = f'Verified returning customer (existed before {inquiry_date_str})'
-                    self.leads_df.loc[idx, 'data_source'] = 'quickbooks_cached'
+                # Check if email exists in customer_cache dictionary with error handling
+                try:
+                    if email_to_check not in customer_cache:
+                        # If email not in cache, treat as 'not a customer'
+                        continue
                     
-                    direct_count += 1
-                    returning_customer_count += 1
+                    # Get creation date from cache with error handling
+                    creation_date_str = customer_cache.get(email_to_check)
                     
-                    print_colored(f"  ✓ {email_to_check} confirmed as returning customer", Colors.GREEN)
-                else:
-                    # Customer was created after inquiry - not direct traffic
-                    print_colored(f"  → {email_to_check} not an existing customer at inquiry time", Colors.BLUE)
+                    if not creation_date_str:
+                        # Customer exists but no creation date available
+                        continue
                     
+                    successful_cache_lookups += 1
+                    
+                except (KeyError, TypeError, AttributeError) as e:
+                    print_colored(f"⚠️  Cache lookup error for {email_to_check}: {e}", Colors.YELLOW)
+                    cache_lookup_errors += 1
+                    continue
+                except Exception as e:
+                    print_colored(f"⚠️  Unexpected cache lookup error for {email_to_check}: {e}", Colors.YELLOW)
+                    cache_lookup_errors += 1
+                    continue
+                
+                # Log checking against cached data
+                print_colored(f"Checking {email_to_check} against cached data: customer since {creation_date_str}", Colors.BLUE)
+                
+                try:
+                    # Convert QuickBooks date to datetime with error handling
+                    if convert_qb_date_func is None:
+                        print_colored(f"⚠️  Date conversion function not available for {email_to_check}", Colors.YELLOW)
+                        continue
+                        
+                    creation_date = convert_qb_date_func(creation_date_str)
+                    
+                    if creation_date is None:
+                        print_colored(f"Could not parse creation date for customer {email_to_check}: {creation_date_str}", Colors.YELLOW)
+                        continue
+                    
+                    # Handle the timezone issue - ensure consistent timezone comparison
+                    from datetime import timezone
+                    
+                    # Make inquiry_timestamp timezone-aware if it isn't already
+                    if inquiry_timestamp.tzinfo is None:
+                        inquiry_timestamp = inquiry_timestamp.replace(tzinfo=timezone.utc)
+                    
+                    # Make creation_date timezone-aware if it isn't already
+                    if creation_date.tzinfo is None:
+                        creation_date = creation_date.replace(tzinfo=timezone.utc)
+                    
+                    # Compare customer_cache[email] with lead inquiry date
+                    is_existing_customer = creation_date < inquiry_timestamp
+                    
+                    time_diff = inquiry_timestamp - creation_date
+                    print_colored(
+                        f"✓ {email_to_check}: Created {creation_date.strftime('%Y-%m-%d %H:%M')}, "
+                        f"Inquiry {inquiry_timestamp.strftime('%Y-%m-%d %H:%M')}, "
+                        f"Gap: {time_diff.days} days, "
+                        f"Existing: {is_existing_customer}", 
+                        Colors.GREEN if is_existing_customer else Colors.BLUE
+                    )
+                    
+                    if is_existing_customer:
+                        # Customer existed BEFORE inquiry - this is genuine direct traffic
+                        inquiry_date_str = inquiry_timestamp.strftime('%Y-%m-%d %H:%M')
+                        self.leads_df.loc[idx, 'attributed_source'] = 'Direct'
+                        self.leads_df.loc[idx, 'attribution_confidence'] = 95
+                        self.leads_df.loc[idx, 'attribution_detail'] = f'Verified returning customer (existed before {inquiry_date_str})'
+                        self.leads_df.loc[idx, 'data_source'] = 'quickbooks_cached'
+                        
+                        direct_count += 1
+                        returning_customer_count += 1
+                        
+                        print_colored(f"  ✓ {email_to_check} confirmed as returning customer", Colors.GREEN)
+                    else:
+                        # Customer was created after inquiry - not direct traffic
+                        print_colored(f"  → {email_to_check} not an existing customer at inquiry time", Colors.BLUE)
+                        
+                except (ValueError, TypeError, AttributeError) as e:
+                    # Date conversion or timezone handling failed - try fallback
+                    print_colored(f"⚠️  Date processing failed for {email_to_check}: {e}", Colors.YELLOW)
+                    cache_lookup_errors += 1
+                    
+                    # Fallback: basic email list check (less reliable)
+                    try:
+                        if hasattr(self, 'customer_emails') and email_to_check in self.customer_emails:
+                            print_colored(f"  → Using fallback customer list check for {email_to_check}", Colors.YELLOW)
+                            
+                            inquiry_date_str = inquiry_timestamp.strftime('%Y-%m-%d %H:%M') if pd.notna(inquiry_timestamp) else "unknown"
+                            self.leads_df.loc[idx, 'attributed_source'] = 'Direct'
+                            self.leads_df.loc[idx, 'attribution_confidence'] = 50  # Lower confidence due to date processing failure
+                            self.leads_df.loc[idx, 'attribution_detail'] = f'Customer email match (date processing failed at {inquiry_date_str})'
+                            self.leads_df.loc[idx, 'data_source'] = 'customer_db_fallback'
+                            
+                            direct_count += 1
+                            fallback_count += 1
+                            
+                            print_colored(f"  ✓ {email_to_check} found in customer list (fallback method)", Colors.YELLOW)
+                    except Exception as fallback_error:
+                        print_colored(f"⚠️  Fallback method also failed for {email_to_check}: {fallback_error}", Colors.YELLOW)
+                        
+                except Exception as e:
+                    # General processing error for this lead
+                    print_colored(f"⚠️  General processing error for {email_to_check}: {e}", Colors.YELLOW)
+                    cache_lookup_errors += 1
+                    
+                    # Attempt basic fallback if possible
+                    try:
+                        if hasattr(self, 'customer_emails') and email_to_check in self.customer_emails:
+                            print_colored(f"  → Emergency fallback for {email_to_check}", Colors.YELLOW)
+                            
+                            self.leads_df.loc[idx, 'attributed_source'] = 'Direct'
+                            self.leads_df.loc[idx, 'attribution_confidence'] = 40  # Low confidence due to processing failure
+                            self.leads_df.loc[idx, 'attribution_detail'] = f'Customer email match (processing failed, emergency fallback)'
+                            self.leads_df.loc[idx, 'data_source'] = 'customer_db_emergency'
+                            
+                            direct_count += 1
+                            fallback_count += 1
+                            
+                            print_colored(f"  ✓ {email_to_check} found via emergency fallback", Colors.YELLOW)
+                    except Exception:
+                        # Even emergency fallback failed - skip this lead
+                        print_colored(f"⚠️  All fallback methods failed for {email_to_check} - skipping", Colors.YELLOW)
+                        
             except Exception as e:
-                # Cache verification failed - try fallback check against customer email list
-                print_colored(f"Cache verification failed for {email_to_check}: {e}", Colors.YELLOW)
-                
-                # Fallback: basic email list check (less reliable)
-                if hasattr(self, 'customer_emails') and email_to_check in self.customer_emails:
-                    print_colored(f"  → Using fallback customer list check for {email_to_check}", Colors.YELLOW)
-                    
-                    inquiry_date_str = inquiry_timestamp.strftime('%Y-%m-%d %H:%M')
-                    self.leads_df.loc[idx, 'attributed_source'] = 'Direct'
-                    self.leads_df.loc[idx, 'attribution_confidence'] = 60  # Lower confidence due to no date verification
-                    self.leads_df.loc[idx, 'attribution_detail'] = f'Customer email match (cache verification failed at {inquiry_date_str})'
-                    self.leads_df.loc[idx, 'data_source'] = 'customer_db_fallback'
-                    
-                    direct_count += 1
-                    fallback_count += 1
-                    
-                    print_colored(f"  ✓ {email_to_check} found in customer list (fallback method)", Colors.YELLOW)
+                # Critical error processing this lead - continue with next lead
+                print_colored(f"❌ Critical error processing lead {idx}: {e}", Colors.RED)
+                cache_lookup_errors += 1
+                continue
 
         # Performance tracking - Calculate lead processing time
         leads_processing_time = time.time() - leads_processing_start
@@ -1282,7 +1375,7 @@ class LeadAttributionAnalyzer:
         estimated_old_time = total_leads * 0.5  # Estimate 0.5 seconds per API call
         performance_gain = estimated_old_time / leads_processing_time if leads_processing_time > 0 else 1
         
-        # Performance summary
+        # Performance summary with error reporting
         print_colored("=" * 60, Colors.BLUE)
         print_colored("🎯 PERFORMANCE OPTIMIZATION RESULTS", Colors.BOLD + Colors.GREEN)
         print_colored("=" * 60, Colors.BLUE)
@@ -1293,9 +1386,30 @@ class LeadAttributionAnalyzer:
         if 'cache_size_mb' in locals():
             print_colored(f"💾 Customer cache using approximately {cache_size_mb:.2f} MB of memory", Colors.GREEN)
         
+        # Error reporting
+        if cache_lookup_errors > 0:
+            error_rate = (cache_lookup_errors / total_leads) * 100
+            error_color = Colors.RED if error_rate > 10 else Colors.YELLOW
+            print_colored(f"⚠️  Cache lookup errors: {cache_lookup_errors}/{total_leads} ({error_rate:.1f}%)", error_color)
+            
+        if successful_cache_lookups > 0:
+            success_rate = (successful_cache_lookups / total_leads) * 100
+            print_colored(f"✅ Successful cache lookups: {successful_cache_lookups}/{total_leads} ({success_rate:.1f}%)", Colors.GREEN)
+        
+        # Cache reliability assessment
+        if cache_lookup_errors == 0:
+            print_colored("🎯 Cache performance: Excellent (no lookup errors)", Colors.GREEN)
+        elif cache_lookup_errors < total_leads * 0.05:  # Less than 5% error rate
+            print_colored("✅ Cache performance: Good (minimal errors)", Colors.GREEN)
+        elif cache_lookup_errors < total_leads * 0.15:  # Less than 15% error rate
+            print_colored("⚠️  Cache performance: Fair (some errors)", Colors.YELLOW)
+        else:
+            print_colored("❌ Cache performance: Poor (high error rate)", Colors.RED)
+            print_colored("💡 Consider investigating cache implementation or data quality", Colors.BLUE)
+        
         print_colored("=" * 60, Colors.BLUE)
         
-        # Summary logging
+        # Summary logging with error context
         print_colored(f"✓ Direct traffic identification completed:", Colors.GREEN)
         print_colored(f"  - Total Direct leads: {direct_count} ({direct_count/len(self.leads_df)*100:.1f}%)", Colors.GREEN)
         
@@ -1305,8 +1419,20 @@ class LeadAttributionAnalyzer:
         if fallback_count > 0:
             print_colored(f"  - Fallback attributions: {fallback_count} (cache verification failed)", Colors.YELLOW)
             
+        if cache_lookup_errors > 0:
+            print_colored(f"  - Cache lookup errors handled: {cache_lookup_errors} (leads skipped gracefully)", Colors.YELLOW)
+            
         if direct_count == 0:
-            print_colored("  - No direct traffic identified - all leads appear to be new prospects", Colors.BLUE)
+            if cache_lookup_errors > total_leads * 0.5:
+                print_colored("  - No direct traffic identified - high error rate may have affected results", Colors.YELLOW)
+            else:
+                print_colored("  - No direct traffic identified - all leads appear to be new prospects", Colors.BLUE)
+        
+        # Ensure attribution can continue even with cache failures
+        if cache_load_failed or cache_lookup_errors > total_leads * 0.8:
+            print_colored("📊 Note: Direct traffic attribution had significant issues", Colors.YELLOW)
+            print_colored("🔄 Attribution system will continue with other traffic sources (SEO, PPC, Referral)", Colors.BLUE)
+            print_colored("💡 Other attribution methods are not affected by customer cache issues", Colors.BLUE)
 
     def identify_seo_traffic(self):
         """Identify traffic from SEO using GSC data first, then CSV fallback"""
