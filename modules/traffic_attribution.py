@@ -1111,60 +1111,85 @@ class LeadAttributionAnalyzer:
         return self.leads_df
 
     def identify_direct_traffic(self):
-        """Identify direct traffic from returning customers"""
-        print_colored("Identifying direct traffic...", Colors.BLUE)
-
-        if not self.customer_emails:
-            print_colored("No customer data available - skipping direct traffic identification", Colors.YELLOW)
-            return
+        """Identify direct traffic from returning customers using QuickBooks customer creation dates"""
+        print_colored("Identifying direct traffic using QuickBooks customer verification...", Colors.BLUE)
 
         direct_count = 0
-        enhanced_direct_count = 0
+        returning_customer_count = 0
+        new_conversion_count = 0
+        fallback_count = 0
 
-        # Enhanced direct traffic detection using creation dates
+        # Process each lead individually with date-based customer verification
         for idx, lead in self.leads_df.iterrows():
             email = lead.get('email', '')
             inquiry_timestamp = lead.get('first_inquiry_timestamp')
             
             # Skip if no email or timestamp
             if not email or pd.isna(inquiry_timestamp):
+                print_colored(f"Skipping lead {idx}: missing email or timestamp", Colors.YELLOW)
                 continue
             
-            # Basic check: is email in customer list
-            if email in self.customer_emails:
-                # Enhanced check: verify customer existed before inquiry
-                try:
-                    is_existing = self.check_if_existing_customer(email, inquiry_timestamp)
-                    
-                    if is_existing:
-                        # High confidence - customer existed before inquiry
-                        self.leads_df.loc[idx, 'attributed_source'] = 'Direct'
-                        self.leads_df.loc[idx, 'attribution_confidence'] = 95
-                        self.leads_df.loc[idx, 'attribution_detail'] = 'Verified returning customer (created before inquiry)'
-                        self.leads_df.loc[idx, 'data_source'] = 'quickbooks_verified'
-                        enhanced_direct_count += 1
-                    else:
-                        # Customer exists but was created after/same time as inquiry - likely a conversion
-                        self.leads_df.loc[idx, 'attributed_source'] = 'Direct'
-                        self.leads_df.loc[idx, 'attribution_confidence'] = 70
-                        self.leads_df.loc[idx, 'attribution_detail'] = 'New customer conversion (created at/after inquiry)'
-                        self.leads_df.loc[idx, 'data_source'] = 'quickbooks_new'
-                    
-                    direct_count += 1
-                    
-                except Exception as e:
-                    # Fallback to basic attribution if enhanced checking fails
-                    print_colored(f"Enhanced check failed for {email}, using basic attribution: {e}", Colors.YELLOW)
+            # Log the date comparison being made
+            inquiry_date_str = inquiry_timestamp.strftime('%Y-%m-%d %H:%M') if pd.notna(inquiry_timestamp) else 'Unknown'
+            print_colored(f"Checking customer status for {email} at inquiry time: {inquiry_date_str}", Colors.BLUE)
+            
+            # Use the new check_if_existing_customer function
+            try:
+                is_existing_customer = self.check_if_existing_customer(email, inquiry_timestamp)
+                
+                if is_existing_customer:
+                    # Customer existed BEFORE inquiry - this is genuine direct traffic
                     self.leads_df.loc[idx, 'attributed_source'] = 'Direct'
-                    self.leads_df.loc[idx, 'attribution_confidence'] = 85
-                    self.leads_df.loc[idx, 'attribution_detail'] = 'Customer email match (creation date unavailable)'
-                    self.leads_df.loc[idx, 'data_source'] = 'customer_db'
+                    self.leads_df.loc[idx, 'attribution_confidence'] = 95
+                    self.leads_df.loc[idx, 'attribution_detail'] = f'Verified returning customer (existed before {inquiry_date_str})'
+                    self.leads_df.loc[idx, 'data_source'] = 'quickbooks_verified'
+                    
                     direct_count += 1
+                    returning_customer_count += 1
+                    
+                    print_colored(f"  ✓ {email} confirmed as returning customer", Colors.GREEN)
+                    
+                else:
+                    # Customer was NOT found or was created after inquiry
+                    # This could be a new lead that later converted, not direct traffic
+                    print_colored(f"  → {email} not an existing customer at inquiry time", Colors.BLUE)
+                    # Do not mark as Direct traffic - leave for other attribution methods
+                    
+            except Exception as e:
+                # Enhanced checking failed - try fallback check against customer email list
+                print_colored(f"QuickBooks verification failed for {email}: {e}", Colors.YELLOW)
+                
+                # Fallback: basic email list check (less reliable)
+                if hasattr(self, 'customer_emails') and email in self.customer_emails:
+                    print_colored(f"  → Using fallback customer list check for {email}", Colors.YELLOW)
+                    
+                    self.leads_df.loc[idx, 'attributed_source'] = 'Direct'
+                    self.leads_df.loc[idx, 'attribution_confidence'] = 60  # Lower confidence due to no date verification
+                    self.leads_df.loc[idx, 'attribution_detail'] = f'Customer email match (date verification failed at {inquiry_date_str})'
+                    self.leads_df.loc[idx, 'data_source'] = 'customer_db_fallback'
+                    
+                    direct_count += 1
+                    fallback_count += 1
+                    
+                    print_colored(f"  ✓ {email} found in customer list (fallback method)", Colors.YELLOW)
+                else:
+                    print_colored(f"  → {email} not found in any customer records", Colors.BLUE)
 
-        print_colored(f"✓ Identified {direct_count} leads as direct traffic ({direct_count/len(self.leads_df)*100:.1f}%)", Colors.GREEN)
-        if enhanced_direct_count > 0:
-            print_colored(f"  - {enhanced_direct_count} verified as returning customers", Colors.GREEN)
-            print_colored(f"  - {direct_count - enhanced_direct_count} identified as new customer conversions", Colors.BLUE)
+        # Summary logging
+        print_colored(f"✓ Direct traffic identification completed:", Colors.GREEN)
+        print_colored(f"  - Total Direct leads: {direct_count} ({direct_count/len(self.leads_df)*100:.1f}%)", Colors.GREEN)
+        
+        if returning_customer_count > 0:
+            print_colored(f"  - Verified returning customers: {returning_customer_count}", Colors.GREEN)
+        
+        if new_conversion_count > 0:
+            print_colored(f"  - New customer conversions: {new_conversion_count}", Colors.BLUE)
+            
+        if fallback_count > 0:
+            print_colored(f"  - Fallback attributions: {fallback_count} (date verification failed)", Colors.YELLOW)
+            
+        if direct_count == 0:
+            print_colored("  - No direct traffic identified - all leads appear to be new prospects", Colors.BLUE)
 
     def identify_seo_traffic(self):
         """Identify traffic from SEO using GSC data first, then CSV fallback"""
