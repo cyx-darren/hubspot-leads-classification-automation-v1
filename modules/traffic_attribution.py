@@ -1128,8 +1128,8 @@ class LeadAttributionAnalyzer:
         return self.leads_df
 
     def identify_direct_traffic(self):
-        """Identify direct traffic from returning customers using QuickBooks customer creation dates"""
-        print_colored("Identifying direct traffic using QuickBooks customer verification...", Colors.BLUE)
+        """Identify direct traffic from returning customers using cached QuickBooks customer data"""
+        print_colored("Identifying direct traffic using cached QuickBooks customer data...", Colors.BLUE)
 
         # Load customer cache ONCE at the beginning
         try:
@@ -1149,39 +1149,36 @@ class LeadAttributionAnalyzer:
 
         direct_count = 0
         returning_customer_count = 0
-        new_conversion_count = 0
         fallback_count = 0
 
-        # Process each lead individually with date-based customer verification
+        # Process each lead using cached customer data
         for idx, lead in self.leads_df.iterrows():
             email = lead.get('email', '')
             inquiry_timestamp = lead.get('first_inquiry_timestamp')
             
             # Skip if no email or timestamp
             if not email or pd.isna(inquiry_timestamp):
-                print_colored(f"Skipping lead {idx}: missing email or timestamp", Colors.YELLOW)
                 continue
             
             # Normalize email for comparison
             email_to_check = email.lower().strip()
             
-            # Log the date comparison being made
-            inquiry_date_str = inquiry_timestamp.strftime('%Y-%m-%d %H:%M') if pd.notna(inquiry_timestamp) else 'Unknown'
-            print_colored(f"Checking customer status for {email} at inquiry time: {inquiry_date_str}", Colors.BLUE)
+            # Check if email exists in customer_cache dictionary
+            if email_to_check not in customer_cache:
+                # If email not in cache, treat as 'not a customer'
+                continue
             
-            # Check against customer cache
+            # Get creation date from cache
+            creation_date_str = customer_cache[email_to_check]
+            
+            if not creation_date_str:
+                # Customer exists but no creation date available
+                continue
+            
+            # Log checking against cached data
+            print_colored(f"Checking {email_to_check} against cached data: customer since {creation_date_str}", Colors.BLUE)
+            
             try:
-                if email_to_check not in customer_cache:
-                    print_colored(f"Customer {email_to_check} not found in QuickBooks", Colors.BLUE)
-                    continue
-                
-                # Get creation date from cache
-                creation_date_str = customer_cache[email_to_check]
-                
-                if not creation_date_str:
-                    print_colored(f"Customer {email_to_check} found but no creation date available", Colors.YELLOW)
-                    continue
-                
                 # Convert QuickBooks date to datetime
                 creation_date = convert_qb_date_to_datetime(creation_date_str)
                 
@@ -1189,16 +1186,18 @@ class LeadAttributionAnalyzer:
                     print_colored(f"Could not parse creation date for customer {email_to_check}: {creation_date_str}", Colors.YELLOW)
                     continue
                 
-                # Ensure both dates are timezone-aware for comparison
+                # Handle the timezone issue - ensure consistent timezone comparison
                 from datetime import timezone
                 
+                # Make inquiry_timestamp timezone-aware if it isn't already
                 if inquiry_timestamp.tzinfo is None:
                     inquiry_timestamp = inquiry_timestamp.replace(tzinfo=timezone.utc)
                 
+                # Make creation_date timezone-aware if it isn't already
                 if creation_date.tzinfo is None:
                     creation_date = creation_date.replace(tzinfo=timezone.utc)
                 
-                # Check if customer was created before inquiry
+                # Compare customer_cache[email] with lead inquiry date
                 is_existing_customer = creation_date < inquiry_timestamp
                 
                 time_diff = inquiry_timestamp - creation_date
@@ -1212,30 +1211,29 @@ class LeadAttributionAnalyzer:
                 
                 if is_existing_customer:
                     # Customer existed BEFORE inquiry - this is genuine direct traffic
+                    inquiry_date_str = inquiry_timestamp.strftime('%Y-%m-%d %H:%M')
                     self.leads_df.loc[idx, 'attributed_source'] = 'Direct'
                     self.leads_df.loc[idx, 'attribution_confidence'] = 95
                     self.leads_df.loc[idx, 'attribution_detail'] = f'Verified returning customer (existed before {inquiry_date_str})'
-                    self.leads_df.loc[idx, 'data_source'] = 'quickbooks_verified'
+                    self.leads_df.loc[idx, 'data_source'] = 'quickbooks_cached'
                     
                     direct_count += 1
                     returning_customer_count += 1
                     
-                    print_colored(f"  ✓ {email} confirmed as returning customer", Colors.GREEN)
-                    
+                    print_colored(f"  ✓ {email_to_check} confirmed as returning customer", Colors.GREEN)
                 else:
-                    # Customer was NOT found or was created after inquiry
-                    # This could be a new lead that later converted, not direct traffic
-                    print_colored(f"  → {email} not an existing customer at inquiry time", Colors.BLUE)
-                    # Do not mark as Direct traffic - leave for other attribution methods
+                    # Customer was created after inquiry - not direct traffic
+                    print_colored(f"  → {email_to_check} not an existing customer at inquiry time", Colors.BLUE)
                     
             except Exception as e:
-                # Enhanced checking failed - try fallback check against customer email list
-                print_colored(f"Cache verification failed for {email}: {e}", Colors.YELLOW)
+                # Cache verification failed - try fallback check against customer email list
+                print_colored(f"Cache verification failed for {email_to_check}: {e}", Colors.YELLOW)
                 
                 # Fallback: basic email list check (less reliable)
-                if hasattr(self, 'customer_emails') and email in self.customer_emails:
-                    print_colored(f"  → Using fallback customer list check for {email}", Colors.YELLOW)
+                if hasattr(self, 'customer_emails') and email_to_check in self.customer_emails:
+                    print_colored(f"  → Using fallback customer list check for {email_to_check}", Colors.YELLOW)
                     
+                    inquiry_date_str = inquiry_timestamp.strftime('%Y-%m-%d %H:%M')
                     self.leads_df.loc[idx, 'attributed_source'] = 'Direct'
                     self.leads_df.loc[idx, 'attribution_confidence'] = 60  # Lower confidence due to no date verification
                     self.leads_df.loc[idx, 'attribution_detail'] = f'Customer email match (cache verification failed at {inquiry_date_str})'
@@ -1244,9 +1242,7 @@ class LeadAttributionAnalyzer:
                     direct_count += 1
                     fallback_count += 1
                     
-                    print_colored(f"  ✓ {email} found in customer list (fallback method)", Colors.YELLOW)
-                else:
-                    print_colored(f"  → {email} not found in any customer records", Colors.BLUE)
+                    print_colored(f"  ✓ {email_to_check} found in customer list (fallback method)", Colors.YELLOW)
 
         # Summary logging
         print_colored(f"✓ Direct traffic identification completed:", Colors.GREEN)
@@ -1254,9 +1250,6 @@ class LeadAttributionAnalyzer:
         
         if returning_customer_count > 0:
             print_colored(f"  - Verified returning customers: {returning_customer_count}", Colors.GREEN)
-        
-        if new_conversion_count > 0:
-            print_colored(f"  - New customer conversions: {new_conversion_count}", Colors.BLUE)
             
         if fallback_count > 0:
             print_colored(f"  - Fallback attributions: {fallback_count} (cache verification failed)", Colors.YELLOW)
