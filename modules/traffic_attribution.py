@@ -15,6 +15,7 @@ import datetime
 import warnings
 from collections import defaultdict
 from dateutil import parser
+from datetime import timedelta
 import pandas as pd
 import numpy as np
 from typing import List, Dict, Optional, Tuple
@@ -689,6 +690,17 @@ class LeadAttributionAnalyzer:
             
             if self.ga4_traffic_data is not None and not self.ga4_traffic_data.empty:
                 print_colored(f"✓ Loaded {len(self.ga4_traffic_data)} GA4 traffic records", Colors.GREEN)
+                
+                # Show traffic summary
+                traffic_summary = self.ga4_traffic_data.groupby('medium')['sessions'].sum().sort_values(ascending=False)
+                print_colored("\nGA4 Traffic Summary:", Colors.BLUE)
+                for medium, sessions in traffic_summary.head().items():
+                    print_colored(f"  - {medium}: {sessions} sessions", Colors.BLUE)
+                
+                # Specifically highlight PPC traffic
+                ppc_sessions = traffic_summary[traffic_summary.index.isin(['cpc', 'ppc', 'paid'])].sum()
+                if ppc_sessions > 0:
+                    print_colored(f"\n✓ Found {ppc_sessions} PPC sessions in GA4 data - will use for attribution", Colors.GREEN)
             else:
                 print_colored("No GA4 traffic data available for the period", Colors.YELLOW)
             
@@ -1989,8 +2001,54 @@ class LeadAttributionAnalyzer:
                             if new_confidence > original_confidence:
                                 boosted_count += 1
         
+        # Special handling for PPC detection using GA4
+        print_colored("\nChecking for PPC attribution using GA4 data...", Colors.BLUE)
+        ppc_attributed = 0
+        
+        # Look at all leads (not just Unknown) that might be PPC
+        for idx, lead in self.leads_df.iterrows():
+            if lead['attributed_source'] in ['Unknown', 'SEO']:  # Check Unknown and SEO (might be misattributed)
+                lead_time = pd.to_datetime(lead['first_ticket_date'])
+                if pd.isna(lead_time):
+                    continue
+                
+                # Look for PPC traffic within 48 hours before lead
+                time_window_start = lead_time - pd.Timedelta(hours=48)
+                time_window_end = lead_time + pd.Timedelta(minutes=30)
+                
+                # Find CPC/PPC traffic in GA4 data
+                ppc_traffic = self.ga4_traffic_data[
+                    (self.ga4_traffic_data['datetime'] >= time_window_start) &
+                    (self.ga4_traffic_data['datetime'] <= time_window_end) &
+                    (self.ga4_traffic_data['medium'].isin(['cpc', 'ppc', 'paid']))
+                ]
+                
+                if not ppc_traffic.empty:
+                    # Found PPC traffic near lead time
+                    sessions = ppc_traffic['sessions'].sum()
+                    sources = ppc_traffic['source'].value_counts().head(1)
+                    
+                    if sessions > 0:
+                        # Re-attribute to PPC
+                        if lead['attributed_source'] == 'Unknown':
+                            self.leads_df.loc[idx, 'attributed_source'] = 'PPC'
+                            self.leads_df.loc[idx, 'attribution_confidence'] = min(85, 60 + (sessions * 2))
+                            self.leads_df.loc[idx, 'attribution_detail'] = f"GA4 PPC detection: {sources.index[0]}/cpc ({sessions} sessions)"
+                            self.leads_df.loc[idx, 'data_source'] = 'ga4_ppc'
+                            ppc_attributed += 1
+                        elif lead['attributed_source'] == 'SEO' and sessions > 5:
+                            # Strong PPC signal - might override weak SEO attribution
+                            if lead['attribution_confidence'] < 80:
+                                self.leads_df.loc[idx, 'attributed_source'] = 'PPC'
+                                self.leads_df.loc[idx, 'attribution_confidence'] = min(90, 70 + (sessions * 2))
+                                self.leads_df.loc[idx, 'attribution_detail'] = f"GA4 PPC override: {sources.index[0]}/cpc ({sessions} sessions)"
+                                self.leads_df.loc[idx, 'data_source'] = 'ga4_ppc'
+                                ppc_attributed += 1
+        
         print_colored(f"✓ GA4 validation complete: {validated_count} attributions validated", Colors.GREEN)
         print_colored(f"  - {boosted_count} confidence scores boosted", Colors.GREEN)
+        if ppc_attributed > 0:
+            print_colored(f"  - {ppc_attributed} leads attributed to PPC using GA4 data", Colors.GREEN)
 
     def finalize_attribution(self):
         """Finalize attribution and set confidence levels"""
@@ -2005,8 +2063,19 @@ class LeadAttributionAnalyzer:
         attribution_counts = self.leads_df['attributed_source'].value_counts()
 
         print_colored("\n=== Final Attribution Summary ===", Colors.BOLD + Colors.BLUE)
+        
+        # Make sure PPC is included in the final summary even if count is 0
+        source_order = ['Direct', 'SEO', 'PPC', 'Referral', 'Unknown']
+        for source in source_order:
+            count = (self.leads_df['attributed_source'] == source).sum()
+            if count > 0 or source == 'PPC':  # Always show PPC
+                percentage = count/len(self.leads_df)*100
+                print_colored(f"  {source}: {count} leads ({percentage:.1f}%)", Colors.GREEN)
+        
+        # Show any other sources not in the predefined order
         for source, count in attribution_counts.items():
-            print_colored(f"  {source}: {count} leads ({count/len(self.leads_df)*100:.1f}%)", Colors.GREEN)
+            if source not in source_order:
+                print_colored(f"  {source}: {count} leads ({count/len(self.leads_df)*100:.1f}%)", Colors.GREEN)
 
         # Count by confidence level
         confidence_counts = self.leads_df['confidence_level'].value_counts()
