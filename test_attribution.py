@@ -110,41 +110,41 @@ def test_ga4_integration():
     print("\n" + "="*60)
     print("TESTING GA4 INTEGRATION")
     print("="*60)
-    
+
     # Check if GA4 is configured
     ga4_property_id = os.environ.get('GA4_PROPERTY_ID')
     ga4_creds = os.environ.get('GA4_CREDENTIALS') or os.environ.get('GSC_CREDENTIALS')
-    
+
     if not ga4_property_id:
         print("✗ GA4_PROPERTY_ID not found in environment")
         print("  Add your GA4 property ID to Replit Secrets")
         return False
-        
+
     if not ga4_creds:
         print("✗ GA4 credentials not found")
         print("  Add GA4_CREDENTIALS to Secrets or reuse GSC_CREDENTIALS")
         return False
-        
+
     print(f"✓ GA4 Property ID: {ga4_property_id}")
     print("✓ GA4 credentials found")
-    
+
     # Test connection
     try:
         from modules.ga4_client import GoogleAnalytics4Client
         from datetime import datetime, timedelta
-        
+
         client = GoogleAnalytics4Client()
         client.authenticate()
-        
+
         # Get sample data
         end_date = datetime.now()
         start_date = end_date - timedelta(days=7)
-        
+
         traffic = client.get_traffic_by_source(start_date, end_date)
-        
+
         print(f"\n✓ Successfully connected to GA4!")
         print(f"✓ Retrieved {len(traffic)} traffic records")
-        
+
         # Show traffic summary
         if not traffic.empty:
             print("\nTraffic Summary (Last 7 Days):")
@@ -157,9 +157,9 @@ def test_ga4_integration():
             print("  - New GA4 properties")
             print("  - Properties with low traffic")
             print("  - Recent date ranges (GA4 has processing delays)")
-            
+
         return True
-        
+
     except Exception as e:
         print(f"\n✗ GA4 test failed: {e}")
         return False
@@ -327,13 +327,71 @@ def test_attribution():
         print("   ✗ Main output file not created")
         return False
 
-if __name__ == "__main__":
+def print_colored(text, color):
+    """Prints text with color using ANSI escape codes."""
+    colors = {
+        "RED": "\033[91m",
+        "GREEN": "\033[92m",
+        "YELLOW": "\033[93m",
+        "BLUE": "\033[94m",
+        "BOLD": "\033[1m",
+        "END": "\033[0m"
+    }
+    print(f"{colors.get(color[:color.find('+')] if '+' in color else color, '')}{text}{colors['END']}")
+
+class Colors:
+    RED = "RED"
+    GREEN = "GREEN"
+    YELLOW = "YELLOW"
+    BLUE = "BLUE"
+    BOLD = "BOLD"
+    END = "END"
+
+def test_customer_date_comparison():
+    """Test customer date comparison with specific email"""
+    from modules.traffic_attribution import LeadAttributionAnalyzer
+    from datetime import datetime
+
+    print_colored("Testing customer date comparison...", Colors.BLUE)
+
+    # Initialize analyzer
+    analyzer = LeadAttributionAnalyzer()
+
+    # Test with charles.nate@gmail.com
+    test_email = "charles.nate@gmail.com"
+    test_inquiry_date = datetime(2025, 2, 7, 11, 36)  # From console output
+
+    print_colored(f"Testing customer check for: {test_email}", Colors.BLUE)
+    print_colored(f"Inquiry date: {test_inquiry_date}", Colors.BLUE)
+
+    try:
+        is_existing = analyzer.check_if_existing_customer(test_email, test_inquiry_date)
+        print_colored(f"Result: Customer existed before inquiry = {is_existing}", Colors.GREEN)
+
+        # Test a few more cases
+        test_cases = [
+            ("e.goddard@marcura.com", datetime(2025, 2, 7, 11, 36)),
+            ("ser.j@nexus.edu.sg", datetime(2025, 2, 28, 2, 43)),
+            ("sheena_diong@nlb.gov.sg", datetime(2025, 2, 4, 8, 5))
+        ]
+
+        for email, inquiry_date in test_cases:
+            print_colored(f"\nTesting: {email} at {inquiry_date}", Colors.BLUE)
+            is_existing = analyzer.check_if_existing_customer(email, inquiry_date)
+            print_colored(f"Result: {is_existing}", Colors.GREEN if is_existing else Colors.YELLOW)
+
+    except Exception as e:
+        print_colored(f"Error testing customer date comparison: {e}", Colors.RED)
+        import traceback
+        traceback.print_exc()
+
+def main():
     # Test GSC integration first
     gsc_result = test_gsc_integration()
 
     # Test GA4 integration
     ga4_result = test_ga4_integration()
-    
+
     if ga4_result:
         print("\n✓ GA4 integration ready for use!")
     else:
@@ -382,3 +440,11 @@ if __name__ == "__main__":
             print("💡 Consider setting up GA4 for enhanced attribution")
     else:
         print("⚠️  SOME TESTS FAILED - CHECK LOGS ABOVE")
+
+if __name__ == "__main__":
+    # Run the main test first
+    print_colored("=== Running Main Attribution Test ===", Colors.BOLD + Colors.BLUE)
+    main()
+
+    print_colored("\n=== Testing Customer Date Comparison ===", Colors.BOLD + Colors.BLUE)
+    test_customer_date_comparison()

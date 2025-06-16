@@ -311,11 +311,13 @@ class LeadAttributionAnalyzer:
                         return False
                     
                     # Ensure both dates are timezone-aware for comparison
-                    if inquiry_date.tz is None:
-                        inquiry_date = inquiry_date.tz_localize('UTC')
+                    from datetime import timezone
                     
-                    if creation_date.tz is None:
-                        creation_date = creation_date.tz_localize('UTC')
+                    if inquiry_date.tzinfo is None:
+                        inquiry_date = inquiry_date.replace(tzinfo=timezone.utc)
+                    
+                    if creation_date.tzinfo is None:
+                        creation_date = creation_date.replace(tzinfo=timezone.utc)
                     
                     # Check if customer was created before inquiry
                     is_existing = creation_date < inquiry_date
