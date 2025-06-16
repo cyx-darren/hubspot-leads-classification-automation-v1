@@ -1,0 +1,161 @@
+Create Google Analytics 4 client for aggregate traffic data:
+
+1. First, add the GA4 dependency to requirements.txt:
+   google-analytics-data
+
+2. Create /modules/ga4_client.py:
+   ```python
+   import os
+   import json
+   from google.analytics.data_v1beta import BetaAnalyticsDataClient
+   from google.analytics.data_v1beta.types import (
+       DateRange, Dimension, Metric, RunReportRequest
+   )
+   from google.oauth2 import service_account
+   import pandas as pd
+   from datetime import datetime, timedelta
+   
+   class GoogleAnalytics4Client:
+       def __init__(self, credentials_path=None, property_id=None):
+           """Initialize GA4 client"""
+           self.credentials_path = credentials_path
+           self.property_id = property_id or os.environ.get('GA4_PROPERTY_ID')
+           self.client = None
+           
+       def get_credentials(self):
+           """Get credentials from file or environment"""
+           # Try environment variable first
+           creds_json = os.environ.get('GA4_CREDENTIALS')
+           if creds_json:
+               return json.loads(creds_json)
+           
+           # Try file
+           if self.credentials_path and os.path.exists(self.credentials_path):
+               with open(self.credentials_path, 'r') as f:
+                   return json.load(f)
+           
+           # Try to reuse GSC credentials if available
+           gsc_creds = os.environ.get('GSC_CREDENTIALS')
+           if gsc_creds:
+               print("Using GSC credentials for GA4")
+               return json.loads(gsc_creds)
+               
+           return None
+           
+       def authenticate(self):
+           """Authenticate using service account credentials"""
+           creds_data = self.get_credentials()
+           if not creds_data:
+               raise ValueError("No GA4 credentials found")
+               
+           credentials = service_account.Credentials.from_service_account_info(
+               creds_data,
+               scopes=['https://www.googleapis.com/auth/analytics.readonly']
+           )
+           
+           self.client = BetaAnalyticsDataClient(credentials=credentials)
+           return True
+           
+       def get_traffic_by_source(self, start_date, end_date):
+           """Get session counts by source/medium"""
+           request = RunReportRequest(
+               property=f"properties/{self.property_id}",
+               date_ranges=[DateRange(
+                   start_date=start_date.strftime('%Y-%m-%d'),
+                   end_date=end_date.strftime('%Y-%m-%d')
+               )],
+               dimensions=[
+                   Dimension(name="sessionSource"),
+                   Dimension(name="sessionMedium"),
+                   Dimension(name="date")
+               ],
+               metrics=[
+                   Metric(name="sessions"),
+                   Metric(name="totalUsers"),
+                   Metric(name="newUsers")
+               ]
+           )
+           
+           response = self.client.run_report(request)
+           
+           # Convert to DataFrame
+           data = []
+           for row in response.rows:
+               data.append({
+                   'source': row.dimension_values[0].value,
+                   'medium': row.dimension_values[1].value,
+                   'date': row.dimension_values[2].value,
+                   'sessions': int(row.metric_values[0].value),
+                   'total_users': int(row.metric_values[1].value),
+                   'new_users': int(row.metric_values[2].value)
+               })
+               
+           return pd.DataFrame(data)
+           
+       def get_landing_page_traffic(self, start_date, end_date):
+           """Get traffic by landing page and source"""
+           request = RunReportRequest(
+               property=f"properties/{self.property_id}",
+               date_ranges=[DateRange(
+                   start_date=start_date.strftime('%Y-%m-%d'),
+                   end_date=end_date.strftime('%Y-%m-%d')
+               )],
+               dimensions=[
+                   Dimension(name="landingPagePlusQueryString"),
+                   Dimension(name="sessionSource"),
+                   Dimension(name="date")
+               ],
+               metrics=[
+                   Metric(name="sessions")
+               ],
+               order_bys=[{"metric": {"metric_name": "sessions"}, "desc": True}],
+               limit=1000
+           )
+           
+           response = self.client.run_report(request)
+           
+           data = []
+           for row in response.rows:
+               data.append({
+                   'landing_page': row.dimension_values[0].value,
+                   'source': row.dimension_values[1].value,
+                   'date': row.dimension_values[2].value,
+                   'sessions': int(row.metric_values[0].value)
+               })
+               
+           return pd.DataFrame(data)
+           
+       def get_hourly_traffic_patterns(self, start_date, end_date):
+           """Get traffic patterns by hour for validation"""
+           request = RunReportRequest(
+               property=f"properties/{self.property_id}",
+               date_ranges=[DateRange(
+                   start_date=start_date.strftime('%Y-%m-%d'),
+                   end_date=end_date.strftime('%Y-%m-%d')
+               )],
+               dimensions=[
+                   Dimension(name="dateHourMinute"),
+                   Dimension(name="sessionSource"),
+                   Dimension(name="sessionMedium")
+               ],
+               metrics=[
+                   Metric(name="sessions")
+               ]
+           )
+           
+           response = self.client.run_report(request)
+           
+           data = []
+           for row in response.rows:
+               data.append({
+                   'datetime': row.dimension_values[0].value,
+                   'source': row.dimension_values[1].value,
+                   'medium': row.dimension_values[2].value,
+                   'sessions': int(row.metric_values[0].value)
+               })
+               
+           df = pd.DataFrame(data)
+           # Convert datetime string to proper datetime
+           df['datetime'] = pd.to_datetime(df['datetime'], format='%Y%m%d%H%M')
+           
+           return df

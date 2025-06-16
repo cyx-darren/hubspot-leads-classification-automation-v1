@@ -163,8 +163,3 @@ cython_debug/
 data/credentials/
 *.json
 gsc_credentials.json
-
-# QuickBooks token files
-data/.quickbooks_token.json
-.quickbooks_token.json
-*.token.json

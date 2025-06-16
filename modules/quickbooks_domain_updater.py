@@ -38,36 +38,33 @@ def print_colored(text: str, color: str):
     }
     print(f"{colors.get(color, '')}{text}{colors.get('ENDC', '')}")
 
-from modules.token_manager import TokenManager
-
-token_manager = TokenManager()
 
 def get_access_token():
-    """Get access token using refresh token with automatic token rotation"""
+    """Get access token using refresh token"""
     import datetime
 
     token_url = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
 
     try:
-        # Get refresh token from TokenManager
-        current_refresh_token = token_manager.get_refresh_token()
-
-        if not current_refresh_token:
-            print_colored("No refresh token available from DB or Secrets", 'RED')
-            return None
-
         # Add timestamp check
         print(f"Current time: {datetime.datetime.now()}")
-        print(f"Token refresh attempt at: {datetime.datetime.now().isoformat()}")
+        print(
+            f"Token refresh attempt at: {datetime.datetime.now().isoformat()}")
 
-        # Show token info (safely)
-        print(f"Refresh token starts with: {current_refresh_token[:20]}...")
-        print(f"Refresh token ends with: ...{current_refresh_token[-20:]}")
-        print(f"Refresh token length: {len(current_refresh_token)}")
+        # Check refresh token details
+        stored_token = os.environ.get('QUICKBOOKS_REFRESH_TOKEN', '')
+        print(f"Refresh token starts with: {stored_token[:20]}...")
+        print(f"Refresh token ends with: ...{stored_token[-20:]}")
+        print(f"Refresh token length: {len(stored_token)}")
 
         # Add debug info (safely showing only first 20 chars)
+        print(
+            f"Using refresh token: {QB_REFRESH_TOKEN[:20] if QB_REFRESH_TOKEN else 'None'}..."
+        )
         print(f"Client ID: {QB_CLIENT_ID[:20] if QB_CLIENT_ID else 'None'}...")
-        print(f"Company ID: {QB_COMPANY_ID[:20] if QB_COMPANY_ID else 'None'}...")
+        print(
+            f"Company ID: {QB_COMPANY_ID[:20] if QB_COMPANY_ID else 'None'}..."
+        )
 
         headers = {
             'Accept': 'application/json',
@@ -76,11 +73,10 @@ def get_access_token():
 
         data = {
             'grant_type': 'refresh_token',
-            'refresh_token': current_refresh_token,
+            'refresh_token': QB_REFRESH_TOKEN,
             'client_id': QB_CLIENT_ID,
             'client_secret': QB_CLIENT_SECRET
         }
-
 
         print(f"Request URL: {token_url}")
         print(f"Request headers: {headers}")
@@ -134,18 +130,10 @@ def get_access_token():
 
         response.raise_for_status()
         token_data = response.json()
-        access_token = token_data.get('access_token')
-        new_refresh_token = token_data.get('refresh_token')
-
-        # Automatically save new refresh token
-        if new_refresh_token and new_refresh_token != current_refresh_token:
-            token_manager.save_refresh_token(new_refresh_token)
-            print("✓ Token automatically updated - no manual action needed!")
-
         print(
-            f"Successfully got access token: {access_token[:20]}..."
+            f"Successfully got access token: {token_data.get('access_token', '')[:20]}..."
         )
-        return access_token
+        return token_data.get('access_token')
 
     except Exception as e:
         print_colored(f"Token refresh error details: {str(e)}", 'RED')
