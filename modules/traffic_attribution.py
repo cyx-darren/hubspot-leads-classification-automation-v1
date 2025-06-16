@@ -227,7 +227,8 @@ class LeadAttributionAnalyzer:
             # Import QuickBooks functionality from existing module
             from modules.quickbooks_domain_updater import get_quickbooks_customers, extract_customer_domains
             
-            print_colored("Fetching customers from QuickBooks API...", Colors.BLUE)
+            print_colored("Loading customer data from QuickBooks... (this takes 20-30 seconds)", Colors.BLUE)
+            print_colored("📊 Preparing customer database for attribution analysis...", Colors.BLUE)
             
             # Get customers from QuickBooks
             customers = get_quickbooks_customers()
@@ -237,9 +238,18 @@ class LeadAttributionAnalyzer:
                 print_colored("This means 'Direct' traffic attribution won't be available", Colors.YELLOW)
                 return pd.DataFrame(columns=['email'])
             
+            print_colored("📧 Processing customer email addresses...", Colors.BLUE)
+            
             # Extract email addresses from customers
             customer_emails = []
-            for customer in customers:
+            total_customers = len(customers)
+            
+            for i, customer in enumerate(customers):
+                # Show progress every 500 customers
+                if i > 0 and i % 500 == 0:
+                    progress_pct = (i / total_customers) * 100
+                    print_colored(f"   Processing emails: {i}/{total_customers} ({progress_pct:.1f}%)", Colors.BLUE)
+                
                 email = customer.get('PrimaryEmailAddr', {}).get('Address', '')
                 if email and '@' in email:
                     customer_emails.append(email.lower().strip())
@@ -250,7 +260,14 @@ class LeadAttributionAnalyzer:
             })
             
             # Remove duplicates
+            original_count = len(customers_df)
             customers_df = customers_df.drop_duplicates()
+            final_count = len(customers_df)
+            
+            if original_count != final_count:
+                print_colored(f"   Removed {original_count - final_count} duplicate email addresses", Colors.BLUE)
+            
+            print_colored(f"✅ Customer data loaded: {final_count} customers ready for attribution", Colors.GREEN)
             
             return customers_df
             
@@ -279,7 +296,7 @@ class LeadAttributionAnalyzer:
             # Import QuickBooks functionality
             from modules.quickbooks_domain_updater import get_customer_with_dates, convert_qb_date_to_datetime
             
-            print_colored(f"Checking if {email} is an existing customer before {inquiry_date.strftime('%Y-%m-%d')}", Colors.BLUE)
+            print_colored(f"🔍 Verifying customer status: {email} (inquiry: {inquiry_date.strftime('%Y-%m-%d')})", Colors.BLUE)
             
             # Get customers with creation dates from QuickBooks
             customers_with_dates = get_customer_with_dates()

@@ -348,9 +348,13 @@ def get_quickbooks_customers():
     max_results = 100
 
     try:
-        print_colored("Fetching customers with pagination...", 'BLUE')
+        print_colored("📡 Connecting to QuickBooks API...", 'BLUE')
+        print_colored("⏳ Fetching customer records with pagination (this may take 20-30 seconds)...", 'BLUE')
 
+        batch_count = 0
         while True:
+            batch_count += 1
+            
             # Query with pagination
             query = f"SELECT * FROM Customer MAXRESULTS {max_results} STARTPOSITION {start_position}"
             url = f"{base_url}/query?query={query}"
@@ -370,14 +374,29 @@ def get_quickbooks_customers():
 
             all_customers.extend(batch_customers)
 
+            # Enhanced progress messages with percentage
+            current_count = len(all_customers)
+            
+            # Estimate total based on batch size (rough estimate for progress)
+            if current_count < 1000:
+                estimated_total = "~1000+"
+            elif current_count < 3000:
+                estimated_total = "~3000+"
+            else:
+                estimated_total = "~5000+"
+            
             print_colored(
-                f"  Retrieved {len(batch_customers)} customers (total so far: {len(all_customers)})",
+                f"  📥 Batch {batch_count}: +{len(batch_customers)} customers | Total: {current_count} (estimated {estimated_total})",
                 'BLUE')
 
-            # Progress indicator for large datasets
-            if len(all_customers) % 500 == 0:
+            # Progress milestones with different colors
+            if current_count % 1000 == 0:
                 print_colored(
-                    f"  Progress: {len(all_customers)} customers fetched...",
+                    f"  🎯 Milestone: {current_count} customers loaded...",
+                    'GREEN')
+            elif current_count % 500 == 0:
+                print_colored(
+                    f"  📊 Progress: {current_count} customers loaded...",
                     'YELLOW')
 
             # Check if there are more results
@@ -388,7 +407,7 @@ def get_quickbooks_customers():
             # Move to next page
             start_position += max_results
 
-        print_colored(f"Total customers retrieved: {len(all_customers)}",
+        print_colored(f"✅ QuickBooks sync complete: {len(all_customers)} total customers retrieved",
                       'GREEN')
         return all_customers
 
