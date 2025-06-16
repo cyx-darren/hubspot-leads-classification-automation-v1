@@ -1,78 +1,76 @@
 ======================================================================
 TRAFFIC ATTRIBUTION ANALYSIS REPORT
 ======================================================================
-Generated: 2025-06-15 08:10:17
-Total Leads Analyzed: 49
+Generated: 2025-06-15 14:17:52
+Total Leads Analyzed: 121
 
 1. ATTRIBUTION BREAKDOWN BY SOURCE
 ----------------------------------------
-SEO            :   26 leads ( 53.1%)
-Direct         :   20 leads ( 40.8%)
-Unknown        :    2 leads (  4.1%)
-Referral       :    1 leads (  2.0%)
+SEO            :   61 leads ( 50.4%)
+Direct         :   37 leads ( 30.6%)
+Referral       :   23 leads ( 19.0%)
 
-Total Attributed: 49 leads
-Attribution Rate: 95.9%
+Total Attributed: 121 leads
 
 2. CONFIDENCE LEVEL DISTRIBUTION
 ----------------------------------------
-High      :   44 leads ( 89.8%)
-Medium    :    3 leads (  6.1%)
-Unknown   :    2 leads (  4.1%)
+High      :   97 leads ( 80.2%)
+Low       :   15 leads ( 12.4%)
+Medium    :    9 leads (  7.4%)
 
 3. TOP PRODUCTS BY SOURCE
 ----------------------------------------
 
-SEO Traffic (26 leads):
-  - Custom Enamel & Lapel Pin Badges in Singapore: 2 mentions
-  - Lanyards (With Printing): 2 mentions
-  - Non Woven Drawstring Bags: 1 mentions
-  - Certificate Printing in Singapore: 1 mentions
-  - Black Certificate Holder: 1 mentions
+SEO Traffic (61 leads):
+  - Lanyards (With Printing): 11 mentions
+  - Custom Enamel & Lapel Pin Badges in Singapore: 3 mentions
+  - Custom Paper Bag Printing in Singapore: 3 mentions
+  - A4 Canvas Tote Bag: 3 mentions
+  - Corporate Gift Luggage Tag With Custom Logo: 3 mentions
 
-Direct Traffic (20 leads):
-  - Lanyards (With Printing): 3 mentions
-  - A4 Canvas Tote Bag: 2 mentions
-  - Hi-Visibility Safety Vests in Singapore (w/ Logo Printing): 2 mentions
-  - Custom Enamel & Lapel Pin Badges in Singapore: 1 mentions
-  - A3 Canvas Tote Bag: 1 mentions
+Direct Traffic (37 leads):
+  - Lanyards (With Printing): 9 mentions
+  - Custom Enamel & Lapel Pin Badges in Singapore: 4 mentions
+  - PVC Event Badges: 2 mentions
+  - Standard Stickers: 2 mentions
+  - A4 Canvas Tote Bag: 1 mentions
 
-Referral Traffic (1 leads):
+Referral Traffic (23 leads):
   - No specific products identified
 
 4. TIME PATTERNS
 ----------------------------------------
 Day of Week Distribution:
-  Monday    :   8 leads (16.3%)
-  Tuesday   :  14 leads (28.6%)
-  Wednesday :   8 leads (16.3%)
-  Thursday  :   6 leads (12.2%)
-  Friday    :  11 leads (22.4%)
-  Saturday  :   2 leads ( 4.1%)
+  Monday    :  15 leads (12.4%)
+  Tuesday   :  20 leads (16.5%)
+  Wednesday :  17 leads (14.0%)
+  Thursday  :  21 leads (17.4%)
+  Friday    :  17 leads (14.0%)
+  Saturday  :  30 leads (24.8%)
+  Sunday    :   1 leads ( 0.8%)
 
-Timestamp Analysis (49 leads with valid timestamps):
-  Date Range: 2025-03-03 to 2025-05-01
-  Peak Hour: 1:00 (7 leads)
-  Business Hours (9-17): 8 leads (16.3%)
-  After Hours: 41 leads (83.7%)
+Timestamp Analysis (121 leads with valid timestamps):
+  Date Range: 2025-02-01 to 2025-02-28
+  Peak Hour: 0:00 (28 leads)
+  Business Hours (9-17): 18 leads (14.9%)
+  After Hours: 103 leads (85.1%)
 
 5. DATA SOURCE BREAKDOWN
 ----------------------------------------
-gsc_enhanced   :   26 leads ( 53.1%)
-customer_db    :   20 leads ( 40.8%)
-unknown        :    2 leads (  4.1%)
-pattern        :    1 leads (  2.0%)
+gsc_enhanced   :   61 leads ( 50.4%)
+customer_db    :   37 leads ( 30.6%)
+pattern        :   23 leads ( 19.0%)
 
 6. KEY INSIGHTS
 ----------------------------------------
-• Primary traffic source: SEO (26 leads)
-• High confidence attributions: 44 leads
-• Attribution quality: 95.9% medium+ confidence
-• Weekend vs Weekday: 2 weekend, 47 weekday leads
+• Primary traffic source: SEO (61 leads)
+• High confidence attributions: 97 leads
+• Attribution quality: 87.6% medium+ confidence
+• Weekend vs Weekday: 31 weekend, 90 weekday leads
 
 6. DATA LIMITATIONS
 ----------------------------------------
 
 7. RECOMMENDATIONS
 ----------------------------------------
-• Consider diversifying traffic sources - SEO dominates (53.1%)
+• Consider diversifying traffic sources - SEO dominates (50.4%)
