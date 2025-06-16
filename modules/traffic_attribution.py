@@ -264,6 +264,85 @@ class LeadAttributionAnalyzer:
             print_colored(f"Error details: {e}", Colors.YELLOW)
             return pd.DataFrame(columns=['email'])
 
+    def check_if_existing_customer(self, email: str, inquiry_date: datetime.datetime) -> bool:
+        """
+        Check if an email belongs to an existing customer in QuickBooks who was created before the inquiry date
+        
+        Args:
+            email: Customer email address to check
+            inquiry_date: Date of the inquiry to compare against customer creation date
+            
+        Returns:
+            bool: True if customer existed before inquiry date, False otherwise
+        """
+        try:
+            # Import QuickBooks functionality
+            from modules.quickbooks_domain_updater import get_customer_with_dates, convert_qb_date_to_datetime
+            
+            print_colored(f"Checking if {email} is an existing customer before {inquiry_date.strftime('%Y-%m-%d')}", Colors.BLUE)
+            
+            # Get customers with creation dates from QuickBooks
+            customers_with_dates = get_customer_with_dates()
+            
+            if not customers_with_dates:
+                print_colored("No customer data retrieved from QuickBooks", Colors.YELLOW)
+                return False
+            
+            # Normalize email for comparison
+            email_to_check = email.lower().strip()
+            
+            # Look for matching customer
+            for customer in customers_with_dates:
+                customer_email = customer.get('email', '').lower().strip()
+                
+                if customer_email == email_to_check:
+                    # Found matching customer - check creation date
+                    creation_date_str = customer.get('created_date', '')
+                    
+                    if not creation_date_str:
+                        print_colored(f"Customer {email} found but no creation date available", Colors.YELLOW)
+                        return False
+                    
+                    # Convert QuickBooks date to datetime
+                    creation_date = convert_qb_date_to_datetime(creation_date_str)
+                    
+                    if creation_date is None:
+                        print_colored(f"Could not parse creation date for customer {email}: {creation_date_str}", Colors.YELLOW)
+                        return False
+                    
+                    # Ensure both dates are timezone-aware for comparison
+                    if inquiry_date.tz is None:
+                        inquiry_date = inquiry_date.tz_localize('UTC')
+                    
+                    if creation_date.tz is None:
+                        creation_date = creation_date.tz_localize('UTC')
+                    
+                    # Check if customer was created before inquiry
+                    is_existing = creation_date < inquiry_date
+                    
+                    time_diff = inquiry_date - creation_date
+                    print_colored(
+                        f"Customer {email}: Created {creation_date.strftime('%Y-%m-%d %H:%M')}, "
+                        f"Inquiry {inquiry_date.strftime('%Y-%m-%d %H:%M')}, "
+                        f"Gap: {time_diff.days} days, "
+                        f"Existing: {is_existing}", 
+                        Colors.GREEN if is_existing else Colors.BLUE
+                    )
+                    
+                    return is_existing
+            
+            # Customer not found in QuickBooks
+            print_colored(f"Customer {email} not found in QuickBooks", Colors.BLUE)
+            return False
+            
+        except ImportError:
+            print_colored("QuickBooks module not available for customer checking", Colors.YELLOW)
+            return False
+        except Exception as e:
+            print_colored(f"Error checking customer status for {email}: {e}", Colors.RED)
+            print_colored(f"This could be due to QuickBooks API issues or token expiration", Colors.YELLOW)
+            return False
+
     def load_seo_data_from_csv(self, file_path: str) -> pd.DataFrame:
         """Load SEO keyword data from CSV file"""
         try:
@@ -1039,17 +1118,53 @@ class LeadAttributionAnalyzer:
             print_colored("No customer data available - skipping direct traffic identification", Colors.YELLOW)
             return
 
-        # Check if each lead email is in the customer list
-        direct_mask = self.leads_df['email'].isin(self.customer_emails)
+        direct_count = 0
+        enhanced_direct_count = 0
 
-        # Mark direct traffic
-        self.leads_df.loc[direct_mask, 'attributed_source'] = 'Direct'
-        self.leads_df.loc[direct_mask, 'attribution_confidence'] = 100
-        self.leads_df.loc[direct_mask, 'attribution_detail'] = 'Returning customer'
-        self.leads_df.loc[direct_mask, 'data_source'] = 'customer_db'
+        # Enhanced direct traffic detection using creation dates
+        for idx, lead in self.leads_df.iterrows():
+            email = lead.get('email', '')
+            inquiry_timestamp = lead.get('first_inquiry_timestamp')
+            
+            # Skip if no email or timestamp
+            if not email or pd.isna(inquiry_timestamp):
+                continue
+            
+            # Basic check: is email in customer list
+            if email in self.customer_emails:
+                # Enhanced check: verify customer existed before inquiry
+                try:
+                    is_existing = self.check_if_existing_customer(email, inquiry_timestamp)
+                    
+                    if is_existing:
+                        # High confidence - customer existed before inquiry
+                        self.leads_df.loc[idx, 'attributed_source'] = 'Direct'
+                        self.leads_df.loc[idx, 'attribution_confidence'] = 95
+                        self.leads_df.loc[idx, 'attribution_detail'] = 'Verified returning customer (created before inquiry)'
+                        self.leads_df.loc[idx, 'data_source'] = 'quickbooks_verified'
+                        enhanced_direct_count += 1
+                    else:
+                        # Customer exists but was created after/same time as inquiry - likely a conversion
+                        self.leads_df.loc[idx, 'attributed_source'] = 'Direct'
+                        self.leads_df.loc[idx, 'attribution_confidence'] = 70
+                        self.leads_df.loc[idx, 'attribution_detail'] = 'New customer conversion (created at/after inquiry)'
+                        self.leads_df.loc[idx, 'data_source'] = 'quickbooks_new'
+                    
+                    direct_count += 1
+                    
+                except Exception as e:
+                    # Fallback to basic attribution if enhanced checking fails
+                    print_colored(f"Enhanced check failed for {email}, using basic attribution: {e}", Colors.YELLOW)
+                    self.leads_df.loc[idx, 'attributed_source'] = 'Direct'
+                    self.leads_df.loc[idx, 'attribution_confidence'] = 85
+                    self.leads_df.loc[idx, 'attribution_detail'] = 'Customer email match (creation date unavailable)'
+                    self.leads_df.loc[idx, 'data_source'] = 'customer_db'
+                    direct_count += 1
 
-        direct_count = direct_mask.sum()
         print_colored(f"✓ Identified {direct_count} leads as direct traffic ({direct_count/len(self.leads_df)*100:.1f}%)", Colors.GREEN)
+        if enhanced_direct_count > 0:
+            print_colored(f"  - {enhanced_direct_count} verified as returning customers", Colors.GREEN)
+            print_colored(f"  - {direct_count - enhanced_direct_count} identified as new customer conversions", Colors.BLUE)
 
     def identify_seo_traffic(self):
         """Identify traffic from SEO using GSC data first, then CSV fallback"""
