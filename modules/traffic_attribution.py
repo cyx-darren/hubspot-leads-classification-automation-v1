@@ -1131,6 +1131,22 @@ class LeadAttributionAnalyzer:
         """Identify direct traffic from returning customers using QuickBooks customer creation dates"""
         print_colored("Identifying direct traffic using QuickBooks customer verification...", Colors.BLUE)
 
+        # Load customer cache ONCE at the beginning
+        try:
+            from modules.quickbooks_domain_updater import load_all_customers_for_attribution, convert_qb_date_to_datetime
+            customer_cache = load_all_customers_for_attribution()
+            print_colored(f"Using pre-loaded cache of {len(customer_cache)} customers for attribution", Colors.BLUE)
+        except ImportError:
+            print_colored("QuickBooks module not available - continuing without customer data", Colors.YELLOW)
+            customer_cache = {}
+        except Exception as e:
+            print_colored(f"Error loading customer cache: {e}", Colors.YELLOW)
+            customer_cache = {}
+
+        if not customer_cache:
+            print_colored("No customer data available for direct traffic attribution", Colors.YELLOW)
+            return
+
         direct_count = 0
         returning_customer_count = 0
         new_conversion_count = 0
@@ -1146,13 +1162,53 @@ class LeadAttributionAnalyzer:
                 print_colored(f"Skipping lead {idx}: missing email or timestamp", Colors.YELLOW)
                 continue
             
+            # Normalize email for comparison
+            email_to_check = email.lower().strip()
+            
             # Log the date comparison being made
             inquiry_date_str = inquiry_timestamp.strftime('%Y-%m-%d %H:%M') if pd.notna(inquiry_timestamp) else 'Unknown'
             print_colored(f"Checking customer status for {email} at inquiry time: {inquiry_date_str}", Colors.BLUE)
             
-            # Use the new check_if_existing_customer function
+            # Check against customer cache
             try:
-                is_existing_customer = self.check_if_existing_customer(email, inquiry_timestamp)
+                if email_to_check not in customer_cache:
+                    print_colored(f"Customer {email_to_check} not found in QuickBooks", Colors.BLUE)
+                    continue
+                
+                # Get creation date from cache
+                creation_date_str = customer_cache[email_to_check]
+                
+                if not creation_date_str:
+                    print_colored(f"Customer {email_to_check} found but no creation date available", Colors.YELLOW)
+                    continue
+                
+                # Convert QuickBooks date to datetime
+                creation_date = convert_qb_date_to_datetime(creation_date_str)
+                
+                if creation_date is None:
+                    print_colored(f"Could not parse creation date for customer {email_to_check}: {creation_date_str}", Colors.YELLOW)
+                    continue
+                
+                # Ensure both dates are timezone-aware for comparison
+                from datetime import timezone
+                
+                if inquiry_timestamp.tzinfo is None:
+                    inquiry_timestamp = inquiry_timestamp.replace(tzinfo=timezone.utc)
+                
+                if creation_date.tzinfo is None:
+                    creation_date = creation_date.replace(tzinfo=timezone.utc)
+                
+                # Check if customer was created before inquiry
+                is_existing_customer = creation_date < inquiry_timestamp
+                
+                time_diff = inquiry_timestamp - creation_date
+                print_colored(
+                    f"✓ {email_to_check}: Created {creation_date.strftime('%Y-%m-%d %H:%M')}, "
+                    f"Inquiry {inquiry_timestamp.strftime('%Y-%m-%d %H:%M')}, "
+                    f"Gap: {time_diff.days} days, "
+                    f"Existing: {is_existing_customer}", 
+                    Colors.GREEN if is_existing_customer else Colors.BLUE
+                )
                 
                 if is_existing_customer:
                     # Customer existed BEFORE inquiry - this is genuine direct traffic
@@ -1174,7 +1230,7 @@ class LeadAttributionAnalyzer:
                     
             except Exception as e:
                 # Enhanced checking failed - try fallback check against customer email list
-                print_colored(f"QuickBooks verification failed for {email}: {e}", Colors.YELLOW)
+                print_colored(f"Cache verification failed for {email}: {e}", Colors.YELLOW)
                 
                 # Fallback: basic email list check (less reliable)
                 if hasattr(self, 'customer_emails') and email in self.customer_emails:
@@ -1182,7 +1238,7 @@ class LeadAttributionAnalyzer:
                     
                     self.leads_df.loc[idx, 'attributed_source'] = 'Direct'
                     self.leads_df.loc[idx, 'attribution_confidence'] = 60  # Lower confidence due to no date verification
-                    self.leads_df.loc[idx, 'attribution_detail'] = f'Customer email match (date verification failed at {inquiry_date_str})'
+                    self.leads_df.loc[idx, 'attribution_detail'] = f'Customer email match (cache verification failed at {inquiry_date_str})'
                     self.leads_df.loc[idx, 'data_source'] = 'customer_db_fallback'
                     
                     direct_count += 1
@@ -1203,7 +1259,7 @@ class LeadAttributionAnalyzer:
             print_colored(f"  - New customer conversions: {new_conversion_count}", Colors.BLUE)
             
         if fallback_count > 0:
-            print_colored(f"  - Fallback attributions: {fallback_count} (date verification failed)", Colors.YELLOW)
+            print_colored(f"  - Fallback attributions: {fallback_count} (cache verification failed)", Colors.YELLOW)
             
         if direct_count == 0:
             print_colored("  - No direct traffic identified - all leads appear to be new prospects", Colors.BLUE)
