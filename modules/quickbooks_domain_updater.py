@@ -201,6 +201,47 @@ def extract_customer_domains(customers):
     return domains
 
 
+def extract_customer_details(customers):
+    """Extract detailed customer information including creation dates"""
+    customer_details = []
+    
+    for customer in customers:
+        # Basic customer info
+        customer_id = customer.get('Id', '')
+        name = customer.get('Name', '')
+        company_name = customer.get('CompanyName', '')
+        
+        # Email information
+        email = customer.get('PrimaryEmailAddr', {}).get('Address', '')
+        
+        # Creation date from metadata
+        metadata = customer.get('MetaData', {})
+        create_time = metadata.get('CreateTime', '')
+        last_updated = metadata.get('LastUpdatedTime', '')
+        
+        # Alternative creation date field
+        if not create_time:
+            create_time = customer.get('CreateTime', '')
+        
+        # Only include customers with email addresses
+        if email and '@' in email:
+            domain = email.split('@')[1].lower()
+            
+            customer_info = {
+                'customer_id': customer_id,
+                'name': name,
+                'company_name': company_name,
+                'email': email.lower(),
+                'domain': domain,
+                'create_time': create_time,
+                'last_updated': last_updated
+            }
+            
+            customer_details.append(customer_info)
+    
+    return customer_details
+
+
 def get_quickbooks_customers():
     """Fetch all customers from QuickBooks API using pagination"""
     access_token = get_access_token()
@@ -315,6 +356,26 @@ def save_domains_to_csv(domains: Set[str], filename: str):
         print_colored(f"Error saving domains to CSV: {e}", 'RED')
 
 
+def save_customer_details_to_csv(customer_details: List[Dict], filename: str):
+    """Save detailed customer information to CSV file"""
+    try:
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+
+        with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
+            if customer_details:
+                fieldnames = ['customer_id', 'name', 'company_name', 'email', 'domain', 'create_time', 'last_updated']
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+                
+                for customer in customer_details:
+                    writer.writerow(customer)
+
+        print_colored(f"Saved {len(customer_details)} customer records to {filename}", 'GREEN')
+    except Exception as e:
+        print_colored(f"Error saving customer details to CSV: {e}", 'RED')
+
+
 def main():
     """Main function to update domains from QuickBooks"""
     print_colored("Starting QuickBooks domain update...", 'BLUE')
@@ -356,6 +417,9 @@ def main():
 
     # Extract new domains
     new_domains = extract_customer_domains(customers)
+    
+    # Extract detailed customer information
+    customer_details = extract_customer_details(customers)
 
     # Merge domains
     all_domains = existing_domains | new_domains
@@ -363,15 +427,29 @@ def main():
 
     # Save merged domains
     save_domains_to_csv(all_domains, filename)
+    
+    # Save detailed customer information
+    customer_details_filename = './data/quickbooks_customers.csv'
+    save_customer_details_to_csv(customer_details, customer_details_filename)
 
     print_colored(f"\nDomain update complete!", 'GREEN')
     print(f"Total domains: {len(all_domains)}")
     print(f"New domains added: {new_count}")
+    print(f"Customer records saved: {len(customer_details)}")
 
     if new_count > 0:
         print("New domains:")
         for domain in sorted(new_domains - existing_domains):
             print(f"  + {domain}")
+    
+    # Show some sample creation dates
+    if customer_details:
+        print_colored(f"\nSample customer creation dates:", 'BLUE')
+        for i, customer in enumerate(customer_details[:5]):
+            if customer['create_time']:
+                print(f"  {customer['name']}: {customer['create_time']}")
+            if i >= 4:  # Show max 5 samples
+                break
 
     return 0
 
