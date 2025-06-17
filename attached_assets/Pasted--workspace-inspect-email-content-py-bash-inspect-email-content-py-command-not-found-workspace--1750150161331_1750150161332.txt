@@ -1,0 +1,36 @@
+~/workspace$ inspect_email_content.py
+bash: inspect_email_content.py: command not found
+~/workspace$ python inspect_email_content.py
+Loaded 121 leads from output/leads_with_attribution.csv
+Columns: ['email', 'original_classification', 'original_reason', 'total_tickets_analyzed', 'products_mentioned', 'ticket_subjects', 'analysis_period', 'first_ticket_date', 'last_ticket_date', 'most_recent_update', 'first_inquiry_timestamp', 'last_ticket_timestamp', 'most_recent_update_timestamp', 'extracted_keywords', 'attributed_source', 'attribution_confidence', 'attribution_detail', 'data_source', 'day_of_week', 'hour_of_day', 'product', 'subject', 'ticket_span_days', 'email_domain', 'ga4_validated', 'ga4_sessions', 'drill_down', 'email_content_override', 'override_reason', 'original_attributed_source', 'confidence_level', 'click_to_session_ratio', 'attribution_reliability', 'red_flags', 'likely_misattributed', 'suggested_real_source', 'believability_score', 'analysis_notes']
+
+=== TICKET SUBJECTS SAMPLE ===
+Leads with ticket subjects: 94/121
+
+1. Email: jamesteo@heleflo.com.sg
+   Subjects: RE: RE: Notebooks with Custom Printing...
+   Products: nan
+
+2. Email: chong_wen_xiang@defence.gov.sg
+   Subjects: requesting quotation for navy protocol name tag...
+   Products: nan
+
+3. Email: cm.vinyl.lifestyle@sweelee.com
+   Subjects: Re: Swee Lee Local T-Shirts: Request for Quotation; Re: Swee Lee Local T-Shirts: Request for Quotation...
+   Products: nan
+
+4. Email: shumin.tham@ntu.edu.sg
+   Subjects: (RFQ) Printing of A6 Cards...
+   Products: nan
+
+5. Email: stephanietan@econhealthcare.com
+   Subjects: Automatic reply: Printing of Ez-Link Cards / Lanyards / Event Badges; Printing of Ez-Link Cards / Lanyards / Event Badges...
+   Products: Custom Enamel & Lapel Pin Badges in Singapore; PVC Event Badges
+
+=== CONVERSATION COLUMNS FOUND ===
+Column: email_content_override
+Non-empty values: 121/121
+
+=== TICKET ID COLUMNS ===
+No explicit ticket ID columns found
+We'll need to extract ticket IDs from the leads_with_products.csv or fetch them via email
