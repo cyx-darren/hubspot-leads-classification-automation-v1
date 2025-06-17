@@ -1095,7 +1095,7 @@ class LeadAttributionAnalyzer:
         """Run the full attribution process"""
         print_colored("Starting attribution analysis...", Colors.BOLD + Colors.BLUE)
         
-        total_steps = 6 if self.use_ga4 else 5
+        total_steps = 7 if self.use_ga4 else 6
         
         # Step 1: Identify direct traffic (returning customers)
         self.display_progress_bar(1, total_steps, "Direct Traffic")
@@ -1119,7 +1119,12 @@ class LeadAttributionAnalyzer:
             self.load_ga4_traffic_patterns()
             self.validate_attribution_with_ga4()
 
-        # Step 6: Calculate confidence scores and finalize attribution
+        # Step 6: Email content analysis for attribution overrides
+        step_num = 6 if self.use_ga4 else 5
+        self.display_progress_bar(step_num, total_steps, "Email Content Analysis")
+        self.analyze_email_content_for_attribution_override()
+
+        # Step 7: Calculate confidence scores and finalize attribution
         self.display_progress_bar(total_steps, total_steps, "Finalizing")
         self.finalize_attribution()
 
@@ -2986,7 +2991,7 @@ class LeadAttributionAnalyzer:
                     if keyword_only_pct > 50:
                         f.write("• Include timestamp data in PPC reports for better attribution accuracy\n")
                 
-                if self.use_gsc_data:
+                if self.use_gsc:
                     f.write("• GSC integration enabled - consider expanding API data sources\n")
                 else:
                     f.write("• Consider enabling Google Search Console integration for better SEO attribution\n")
