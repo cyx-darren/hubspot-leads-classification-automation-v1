@@ -1,15 +1,15 @@
 ======================================================================
 TRAFFIC ATTRIBUTION ANALYSIS REPORT
 ======================================================================
-Generated: 2025-06-17 06:52:17
+Generated: 2025-06-17 07:25:45
 Total Leads Analyzed: 121
 
 1. ATTRIBUTION BREAKDOWN BY SOURCE
 ----------------------------------------
-SEO            :   83 leads ( 68.6%)
+SEO            :   75 leads ( 62.0%)
 Referral       :   36 leads ( 29.8%)
+PPC            :    9 leads (  7.4%)
 Direct         :    1 leads (  0.8%)
-PPC            :    1 leads (  0.8%)
 
 Total Attributed: 121 leads
 
@@ -22,20 +22,24 @@ Medium    :   12 leads (  9.9%)
 3. TOP PRODUCTS BY SOURCE
 ----------------------------------------
 
-SEO Traffic (83 leads):
-  - Lanyards (With Printing): 20 mentions
-  - Custom Enamel & Lapel Pin Badges in Singapore: 7 mentions
-  - Custom Paper Bag Printing in Singapore: 4 mentions
-  - Corporate Gift Luggage Tag With Custom Logo: 4 mentions
+SEO Traffic (75 leads):
+  - Lanyards (With Printing): 12 mentions
+  - Custom Enamel & Lapel Pin Badges in Singapore: 6 mentions
   - A4 Canvas Tote Bag: 4 mentions
+  - Custom Paper Bag Printing in Singapore: 4 mentions
+  - Corporate Gift Luggage Tag With Custom Logo: 3 mentions
 
 Referral Traffic (36 leads):
   - No specific products identified
 
-Direct Traffic (1 leads):
-  - No specific products identified
+PPC Traffic (9 leads):
+  - Lanyards (With Printing): 8 mentions
+  - Custom Enamel & Lapel Pin Badges in Singapore: 1 mentions
+  - 3-in-1 Fast charge Cable: 1 mentions
+  - EcoFlex Cable Set: 1 mentions
+  - Phone Card Holders: 1 mentions
 
-PPC Traffic (1 leads):
+Direct Traffic (1 leads):
   - No specific products identified
 
 4. TIME PATTERNS
@@ -64,7 +68,7 @@ ga4_ppc        :    1 leads (  0.8%)
 
 6. KEY INSIGHTS
 ----------------------------------------
-• Primary traffic source: SEO (83 leads)
+• Primary traffic source: SEO (75 leads)
 • High confidence attributions: 90 leads
 • Attribution quality: 84.3% medium+ confidence
 • Weekend vs Weekday: 31 weekend, 90 weekday leads
@@ -74,4 +78,9 @@ ga4_ppc        :    1 leads (  0.8%)
 
 7. RECOMMENDATIONS
 ----------------------------------------
-• Consider diversifying traffic sources - SEO dominates (68.6%)
+• Consider diversifying traffic sources - SEO dominates (62.0%)
+• Consider enabling Google Search Console integration for better SEO attribution
+
+======================================================================
+End of Report
+======================================================================
