@@ -2434,13 +2434,16 @@ class LeadAttributionAnalyzer:
             print_colored(f"  - {ppc_attributed} leads attributed to PPC using GA4 data", Colors.GREEN)
 
     def finalize_attribution(self):
-        """Finalize attribution and set confidence levels"""
+        """Finalize attribution and set confidence levels with enhanced analysis"""
         # Categorize confidence levels
         self.leads_df['confidence_level'] = self.leads_df['attribution_confidence'].apply(
             lambda score: 'High' if score >= self.confidence_thresholds['high'] else 
                          ('Medium' if score >= self.confidence_thresholds['medium'] else 
                           ('Low' if score >= self.confidence_thresholds['low'] else 'Unknown'))
         )
+
+        # Add enhanced attribution analysis
+        self.add_enhanced_analysis()
 
         # Count final attribution by source
         attribution_counts = self.leads_df['attributed_source'].value_counts()
@@ -2467,15 +2470,340 @@ class LeadAttributionAnalyzer:
         for level, count in confidence_counts.items():
             print_colored(f"  {level}: {count} leads ({count/len(self.leads_df)*100:.1f}%)", Colors.GREEN)
 
+        # Show enhanced analysis summary
+        self.show_enhanced_analysis_summary()
+
+    def add_enhanced_analysis(self):
+        """Add enhanced attribution analysis columns"""
+        print_colored("Adding enhanced attribution analysis...", Colors.BLUE)
+        
+        # Initialize new columns
+        self.leads_df['click_to_session_ratio'] = 0.0
+        self.leads_df['attribution_reliability'] = 'UNKNOWN'
+        self.leads_df['red_flags'] = ''
+        self.leads_df['likely_misattributed'] = False
+        self.leads_df['suggested_real_source'] = ''
+        self.leads_df['believability_score'] = 0
+        self.leads_df['analysis_notes'] = ''
+
+        # Process each lead
+        for idx, lead in self.leads_df.iterrows():
+            # Calculate click-to-session ratio
+            ratio = self.calculate_click_to_session_ratio(lead)
+            self.leads_df.loc[idx, 'click_to_session_ratio'] = ratio
+
+            # Detect red flags
+            red_flags = self.detect_red_flags(lead, ratio)
+            self.leads_df.loc[idx, 'red_flags'] = ', '.join(red_flags)
+
+            # Calculate reliability
+            reliability = self.calculate_attribution_reliability(ratio, red_flags)
+            self.leads_df.loc[idx, 'attribution_reliability'] = reliability
+
+            # Check if likely misattributed
+            is_misattributed = self.is_likely_misattributed(reliability, red_flags, ratio)
+            self.leads_df.loc[idx, 'likely_misattributed'] = is_misattributed
+
+            # Suggest real source if misattributed
+            if is_misattributed:
+                suggested_source = self.suggest_real_source(lead, red_flags, ratio)
+                self.leads_df.loc[idx, 'suggested_real_source'] = suggested_source
+
+            # Calculate believability score
+            believability = self.calculate_believability_score(lead, ratio, red_flags, reliability)
+            self.leads_df.loc[idx, 'believability_score'] = believability
+
+            # Generate analysis notes
+            notes = self.generate_analysis_notes(lead, ratio, red_flags, reliability, is_misattributed)
+            self.leads_df.loc[idx, 'analysis_notes'] = notes
+
+        print_colored("✓ Enhanced analysis completed", Colors.GREEN)
+
+    def calculate_click_to_session_ratio(self, lead):
+        """Calculate the ratio of GA4 sessions to GSC clicks"""
+        try:
+            # Extract total clicks from attribution_detail using regex
+            attribution_detail = str(lead.get('attribution_detail', ''))
+            ga4_sessions = lead.get('ga4_sessions', 0)
+            
+            # Find patterns like "Total: 172 clicks" or "172 clicks"
+            import re
+            click_matches = re.findall(r'Total:?\s*(\d+)\s*clicks?|(\d+)\s*clicks?', attribution_detail, re.IGNORECASE)
+            
+            total_clicks = 0
+            if click_matches:
+                # Get the highest click count found
+                for match in click_matches:
+                    clicks = int(match[0] if match[0] else match[1])
+                    total_clicks = max(total_clicks, clicks)
+            
+            # Calculate ratio
+            if total_clicks > 0 and ga4_sessions > 0:
+                ratio = (ga4_sessions / total_clicks) * 100
+                return round(ratio, 2)
+            elif total_clicks == 0 and ga4_sessions > 0:
+                return 100.0  # Sessions without clicks might indicate direct traffic
+            else:
+                return 0.0
+                
+        except Exception as e:
+            return 0.0
+
+    def detect_red_flags(self, lead, ratio):
+        """Detect potential issues with attribution"""
+        red_flags = []
+        
+        attribution_detail = str(lead.get('attribution_detail', ''))
+        attributed_source = lead.get('attributed_source', '')
+        email = lead.get('email', '')
+        ga4_sessions = lead.get('ga4_sessions', 0)
+        
+        # LOW_SESSION_RATIO
+        if ratio < 20 and ratio > 0:
+            red_flags.append('LOW_SESSION_RATIO')
+        
+        # EXTREME_VOLUME - suspiciously high click counts
+        import re
+        click_matches = re.findall(r'(\d+)\s*clicks?', attribution_detail, re.IGNORECASE)
+        if click_matches:
+            max_clicks = max(int(match) for match in click_matches)
+            if max_clicks > 100:
+                red_flags.append('EXTREME_VOLUME')
+        
+        # UNIFORM_PATTERN - repeated identical values
+        if re.search(r'(\d+)\s*clicks.*\1\s*clicks.*\1\s*clicks', attribution_detail):
+            red_flags.append('UNIFORM_PATTERN')
+        
+        # BRANDED_SEARCH_LOW_SESSIONS
+        branded_terms = ['easyprint', 'easy print', 'easyprintsg']
+        if any(term in attribution_detail.lower() for term in branded_terms):
+            if ga4_sessions < 5:
+                red_flags.append('BRANDED_SEARCH_LOW_SESSIONS')
+        
+        # GENERIC_TERM_ATTRIBUTION
+        generic_terms = ['printing', 'singapore', 'custom', 'corporate']
+        if any(term in attribution_detail.lower() for term in generic_terms):
+            if attributed_source == 'SEO' and ratio < 30:
+                red_flags.append('GENERIC_TERM_ATTRIBUTION')
+        
+        # POSITION_MISMATCH - high clicks but poor position
+        position_matches = re.findall(r'pos\s*(\d+\.?\d*)', attribution_detail, re.IGNORECASE)
+        if position_matches:
+            avg_position = sum(float(pos) for pos in position_matches) / len(position_matches)
+            if avg_position > 20 and ga4_sessions > 10:
+                red_flags.append('POSITION_MISMATCH')
+        
+        # PERSONAL_EMAIL_SEO - personal emails attributed to SEO
+        personal_domains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com']
+        if any(domain in email.lower() for domain in personal_domains):
+            if attributed_source == 'SEO' and ga4_sessions < 3:
+                red_flags.append('PERSONAL_EMAIL_SEO')
+        
+        return red_flags
+
+    def calculate_attribution_reliability(self, ratio, red_flags):
+        """Calculate attribution reliability based on ratio and red flags"""
+        critical_flags = ['EXTREME_VOLUME', 'UNIFORM_PATTERN', 'BRANDED_SEARCH_LOW_SESSIONS']
+        minor_flags = ['GENERIC_TERM_ATTRIBUTION', 'POSITION_MISMATCH', 'PERSONAL_EMAIL_SEO']
+        
+        has_critical = any(flag in red_flags for flag in critical_flags)
+        has_minor = any(flag in red_flags for flag in minor_flags)
+        
+        if ratio >= 40 and not has_critical and not has_minor:
+            return 'HIGH'
+        elif (20 <= ratio < 40) or (ratio >= 40 and has_minor):
+            return 'MEDIUM'
+        elif (10 <= ratio < 20) or has_critical or len(red_flags) >= 2:
+            return 'LOW'
+        else:
+            return 'FALSE'
+
+    def is_likely_misattributed(self, reliability, red_flags, ratio):
+        """Determine if attribution is likely incorrect"""
+        if reliability in ['FALSE', 'LOW']:
+            return True
+        
+        critical_flags = ['EXTREME_VOLUME', 'UNIFORM_PATTERN', 'BRANDED_SEARCH_LOW_SESSIONS']
+        if len([flag for flag in red_flags if flag in critical_flags]) >= 2:
+            return True
+        
+        if ratio < 10 and ratio > 0:
+            return True
+            
+        return False
+
+    def suggest_real_source(self, lead, red_flags, ratio):
+        """Suggest alternative traffic source for misattributed leads"""
+        email = lead.get('email', '')
+        ga4_sessions = lead.get('ga4_sessions', 0)
+        attributed_source = lead.get('attributed_source', '')
+        
+        # Personal email with low sessions
+        personal_domains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com']
+        if any(domain in email.lower() for domain in personal_domains) and ga4_sessions <= 2:
+            return 'Direct or Social'
+        
+        # Corporate email with 1-2 sessions
+        if ga4_sessions in [1, 2] and not any(domain in email.lower() for domain in personal_domains):
+            return 'Direct or Referral'
+        
+        # Branded search with low sessions
+        if 'BRANDED_SEARCH_LOW_SESSIONS' in red_flags:
+            return 'Direct'
+        
+        # Extreme volume mismatch
+        if 'EXTREME_VOLUME' in red_flags and ratio < 5:
+            return 'Unknown - Needs Review'
+        
+        # Uniform patterns suggest data issues
+        if 'UNIFORM_PATTERN' in red_flags:
+            return 'Unknown - Data Quality Issue'
+        
+        # Default for other misattributions
+        return 'Unknown - Manual Review Required'
+
+    def calculate_believability_score(self, lead, ratio, red_flags, reliability):
+        """Calculate a 0-100 believability score"""
+        score = 50  # Start at neutral
+        
+        # Ratio contribution (40 points)
+        if ratio >= 50:
+            score += 40
+        elif ratio >= 30:
+            score += 30
+        elif ratio >= 20:
+            score += 20
+        elif ratio >= 10:
+            score += 10
+        elif ratio < 5:
+            score -= 20
+        
+        # Red flags penalty
+        critical_penalty = 25
+        minor_penalty = 10
+        
+        critical_flags = ['EXTREME_VOLUME', 'UNIFORM_PATTERN', 'BRANDED_SEARCH_LOW_SESSIONS']
+        minor_flags = ['GENERIC_TERM_ATTRIBUTION', 'POSITION_MISMATCH', 'PERSONAL_EMAIL_SEO', 'LOW_SESSION_RATIO']
+        
+        for flag in red_flags:
+            if flag in critical_flags:
+                score -= critical_penalty
+            elif flag in minor_flags:
+                score -= minor_penalty
+        
+        # Reliability boost/penalty
+        if reliability == 'HIGH':
+            score += 20
+        elif reliability == 'MEDIUM':
+            score += 10
+        elif reliability == 'LOW':
+            score -= 15
+        elif reliability == 'FALSE':
+            score -= 30
+        
+        # GA4 validation boost
+        if lead.get('ga4_validated', False) and lead.get('ga4_sessions', 0) > 0:
+            score += 15
+        
+        return max(0, min(100, score))
+
+    def generate_analysis_notes(self, lead, ratio, red_flags, reliability, is_misattributed):
+        """Generate human-readable analysis notes"""
+        notes = []
+        
+        # Ratio analysis
+        if ratio > 50:
+            notes.append(f"Excellent session-to-click ratio ({ratio}%)")
+        elif ratio > 30:
+            notes.append(f"Good session-to-click ratio ({ratio}%)")
+        elif ratio > 10:
+            notes.append(f"Moderate session-to-click ratio ({ratio}%)")
+        elif ratio > 0:
+            notes.append(f"Low session-to-click ratio ({ratio}%) raises concerns")
+        else:
+            notes.append("No session data available for validation")
+        
+        # Red flag explanations
+        if 'EXTREME_VOLUME' in red_flags:
+            notes.append("Suspiciously high click volume detected")
+        if 'UNIFORM_PATTERN' in red_flags:
+            notes.append("Uniform click patterns suggest data quality issues")
+        if 'BRANDED_SEARCH_LOW_SESSIONS' in red_flags:
+            notes.append("Branded searches should generate more sessions")
+        if 'PERSONAL_EMAIL_SEO' in red_flags:
+            notes.append("Personal email domains typically indicate direct traffic")
+        
+        # Reliability assessment
+        if reliability == 'HIGH':
+            notes.append("High confidence in attribution accuracy")
+        elif reliability == 'FALSE':
+            notes.append("Attribution likely incorrect based on data patterns")
+        
+        # Misattribution warning
+        if is_misattributed:
+            notes.append("RECOMMENDED: Manual review of this attribution")
+        
+        return '; '.join(notes)
+
+    def show_enhanced_analysis_summary(self):
+        """Show summary of enhanced analysis results"""
+        print_colored("\n=== Enhanced Attribution Analysis Summary ===", Colors.BOLD + Colors.BLUE)
+        
+        # Reliability distribution
+        reliability_counts = self.leads_df['attribution_reliability'].value_counts()
+        print_colored("\nAttribution Reliability:", Colors.BLUE)
+        for level, count in reliability_counts.items():
+            percentage = (count / len(self.leads_df)) * 100
+            print_colored(f"  {level}: {count} leads ({percentage:.1f}%)", Colors.GREEN)
+        
+        # Misattribution summary
+        misattributed_count = self.leads_df['likely_misattributed'].sum()
+        misattributed_pct = (misattributed_count / len(self.leads_df)) * 100
+        print_colored(f"\nLikely Misattributed: {misattributed_count} leads ({misattributed_pct:.1f}%)", Colors.YELLOW)
+        
+        # Average believability score
+        avg_believability = self.leads_df['believability_score'].mean()
+        print_colored(f"Average Believability Score: {avg_believability:.1f}/100", Colors.BLUE)
+        
+        # Show worst ratios for review
+        print_colored("\n=== Top 10 Leads with Worst Click-to-Session Ratios ===", Colors.BOLD + Colors.YELLOW)
+        worst_ratios = self.leads_df.nlargest(10, 'click_to_session_ratio')
+        
+        for idx, lead in worst_ratios.iterrows():
+            ratio = lead['click_to_session_ratio']
+            email = lead['email']
+            source = lead['attributed_source']
+            reliability = lead['attribution_reliability']
+            suggested = lead['suggested_real_source']
+            
+            color = Colors.RED if reliability == 'FALSE' else Colors.YELLOW
+            print_colored(f"  {email}: {ratio}% ({source} → {suggested if suggested else 'N/A'}) [{reliability}]", color)
+
     def save_results(self, output_path: str = "./output/leads_with_attribution.csv"):
-        """Save attribution results to CSV"""
+        """Save attribution results to CSV with enhanced analysis"""
         try:
             # Ensure output directory exists
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
             
+            # Reorder columns to put new analysis columns at the end for better readability
+            original_columns = [col for col in self.leads_df.columns if col not in [
+                'click_to_session_ratio', 'attribution_reliability', 'red_flags', 
+                'likely_misattributed', 'suggested_real_source', 'believability_score', 'analysis_notes'
+            ]]
+            
+            new_analysis_columns = [
+                'click_to_session_ratio', 'attribution_reliability', 'red_flags',
+                'likely_misattributed', 'suggested_real_source', 'believability_score', 'analysis_notes'
+            ]
+            
+            # Reorder DataFrame columns
+            column_order = original_columns + [col for col in new_analysis_columns if col in self.leads_df.columns]
+            self.leads_df = self.leads_df[column_order]
+            
             # Save to CSV
             self.leads_df.to_csv(output_path, index=False)
-            print_colored(f"✓ Attribution results saved to {output_path}", Colors.GREEN)
+            print_colored(f"✓ Enhanced attribution results saved to {output_path}", Colors.GREEN)
+            print_colored(f"✓ Added {len(new_analysis_columns)} new analysis columns", Colors.GREEN)
             
             return True
         except Exception as e:
