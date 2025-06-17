@@ -1,0 +1,55 @@
+"Enhance the attribution analysis by analyzing email content and subject lines to correct misattributions. Add these new features:
+
+1. **Add a new column 'drill_down' that provides campaign-level detail**
+
+2. **Create email content analyzers that override attribution based on email text:**
+
+   A) PPC CAMPAIGN DETECTION (from subject lines):
+      - If subject contains 'You've Got a New Enquiry! (Lanyard LP)' → 
+        * Set attributed_source = 'PPC'
+        * Set drill_down = 'Google Ads - Lanyard Campaign'
+      - Add patterns for other campaign identifiers you find
+
+   B) PAYMENT EMAIL DETECTION (change to Direct):
+      - Search email content for payment-related phrases:
+        * 'Payment scheduled'
+        * 'Payment has been released'
+        * 'remittance advice'
+        * 'payment is currently routing for approval'
+        * 'provide your latest SOA'
+        * 'for our checking and payment'
+      - If found → attributed_source = 'Direct' (existing customer)
+      - Add analysis_notes = 'Payment-related communication'
+
+   C) REPEAT CUSTOMER DETECTION (change to Direct):
+      - Search for repeat customer indicators:
+        * 'have ordered * from you' (regex pattern)
+        * 'Hi [Name],' at email start (personal greeting)
+        * 'our last order was'
+        * 'ordered before'
+        * 'you still have our artwork'
+      - If found → attributed_source = 'Direct'
+      - Add analysis_notes = 'Repeat customer identified'
+
+   D) REFERRAL DETECTION (change to Referral):
+      - Search for referral phrases:
+        * 'got your contact from my colleague'
+        * 'taken over * from [Name]'
+        * '[Name] shared your details'
+        * '[Name] kindly shared'
+        * 'my colleague * who printed'
+      - If found → attributed_source = 'Referral'
+      - Extract referrer name if possible
+      - Add to drill_down = 'Referral from [Name]'
+
+3. **Create new analysis columns:**
+   - email_content_override (TRUE if attribution changed based on email)
+   - override_reason (why the attribution was changed)
+   - original_attributed_source (preserve the original before override)
+
+4. **Processing order:**
+   - First: Check subject for PPC campaigns
+   - Second: Check email content for payment/repeat/referral
+   - Third: Apply overrides with highest confidence
+
+Show me examples of leads where attribution was changed based on email content."
