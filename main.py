@@ -305,10 +305,10 @@ def run_traffic_attribution():
         gsc_creds_path = "data/gsc_credentials.json"
         use_gsc = os.path.exists(gsc_creds_path)
         gsc_property_url = os.environ.get('GSC_PROPERTY_URL')
-        
+
         # Check for GA4 integration
         use_ga4 = bool(os.environ.get('GA4_PROPERTY_ID'))
-        
+
         if use_gsc:
             print_colored("✓ GSC credentials found - using real search click data", "green")
             if gsc_property_url:
@@ -319,7 +319,7 @@ def run_traffic_attribution():
             print_colored("ℹ️  GSC credentials not found - using ranking data only", "blue")
             print_colored("  Tip: Setup GSC integration for enhanced SEO attribution", "blue")
             print_colored("  See data/gsc_setup.md for instructions", "blue")
-        
+
         if use_ga4:
             print_colored("✓ GA4 integration detected - will validate attributions", "green")
         else:
@@ -518,5 +518,143 @@ def main():
         print_colored(f"\nUnexpected error in main workflow: {e}", "red")
         sys.exit(1)
 
+def run_enhanced_attribution_analysis():
+    """Run enhanced attribution analysis with email content analysis"""
+    print_colored("\n3. RUNNING ENHANCED ATTRIBUTION ANALYSIS", "blue")
+    print_colored("-" * 50, "blue")
+
+    # Check if leads_with_products.csv exists
+    if not os.path.exists("output/leads_with_products.csv"):
+        print_colored("Error: leads_with_products.csv not found. Run lead analysis first.", "red")
+        return False
+
+    try:
+        from modules.traffic_attribution import analyze_traffic_attribution
+
+        # GSC configuration check
+        use_gsc = bool(os.environ.get('GSC_CREDENTIALS')) or os.path.exists('data/gsc_credentials.json')
+        gsc_property_url = os.environ.get('GSC_PROPERTY_URL')
+
+        # GA4 configuration check  
+        use_ga4 = bool(os.environ.get('GA4_PROPERTY_ID'))
+
+        print(f"✓ Enhanced attribution with email content analysis enabled")
+        print(f"✓ GSC integration {'enabled' if use_gsc else 'disabled'}")
+        if use_ga4:
+            print("✓ GA4 integration enabled")
+        else:
+            print("ℹ️  GA4 not configured")
+
+        result = analyze_traffic_attribution(
+            leads_path="output/leads_with_products.csv",
+            seo_csv_path="data/Feb2025-SEO.csv",
+            ppc_standard_path="data/When your ads showed Custom and Corporate Gifts and Lanyards (1).csv",
+            ppc_dynamic_path="data/When your ads showed Dynamic Search Ads (1).csv",
+            output_path="output/leads_with_enhanced_attribution.csv",
+            use_gsc=use_gsc,
+            gsc_credentials_path = 'data/gsc_credentials.json' if use_gsc else None,
+            gsc_property_url=gsc_property_url,
+            use_ga4=use_ga4
+        )
+
+        print(f"\n✓ Enhanced attribution analysis completed: {result} leads processed")
+        print_colored("✓ Results saved to output/leads_with_enhanced_attribution.csv", "green")
+        print_colored("✓ Enhanced columns: drill_down, email_content_override, override_reason", "green")
+
+    except Exception as e:
+        print(f"\n✗ Error during enhanced attribution analysis: {e}")
+        return False
+
+    return True
+
 if __name__ == "__main__":
-    main()
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='HubSpot Automation v1 - Complete Workflow')
+    parser.add_argument('--skip-quickbooks', action='store_true', 
+                       help='Skip QuickBooks domain update and run spam detection only')
+    parser.add_argument('--input', help='Input leads CSV file', default=None)
+    args = parser.parse_args()
+
+    print_colored("=== HubSpot Automation v1 - Complete Workflow ===\n", "bold")
+
+    try:
+        # Find leads file
+        if args.input:
+            leads_file = args.input
+            if not os.path.exists(leads_file):
+                print_colored(f"✗ Specified input file not found: {leads_file}", "red")
+                sys.exit(1)
+        else:
+            leads_file = find_leads_file()
+
+            if not leads_file:
+                print_colored("✗ No leads file found", "red")
+                print("\nPlease ensure you have a leads file:")
+                print("  - Named like: leads.csv, leads_may2025.csv, leads_dec2024.csv, etc.")
+                print("  - Located in ./data/ directory or root directory")
+                print("\nAlternatively, specify a file with --input:")
+                print("  python main.py --input your_leads_file.csv")
+                sys.exit(1)
+
+        # Check for required files
+        if not check_required_files(leads_file):
+            print_colored("\nCannot proceed without required files. Exiting.", "red")
+            sys.exit(1)
+
+        print_colored("✓ All required files found\n", "green")
+
+        domains_updated = True
+
+        # Step 1: Update domains (unless skipped)
+        if args.skip_quickbooks:
+            print_colored("Skipping QuickBooks domain update (--skip-quickbooks flag used)", "yellow")
+            print("Using existing ./data/Unique_Email_Domains.csv")
+            domains_updated = False
+        else:
+            if not update_domains_with_error_handling():
+                sys.exit(1)
+            domains_updated = True
+
+        print("\n" + "=" * 50)
+
+        # Step 2: Run spam detection
+        detector = None
+        try:
+            not_spam_count, spam_count, total_processed, detector = run_spam_detection(leads_file)
+        except KeyboardInterrupt:
+            print_colored("\nWorkflow interrupted by user. Exiting.", "yellow")
+            sys.exit(0)
+        except Exception:
+            print_colored("\nSpam detection failed. Exiting.", "red")
+            sys.exit(1)
+
+        print("\n" + "=" * 50)
+
+        # Step 3: Run lead analysis with same date range as spam detector
+        analyzed_leads_count = 0
+        try:
+            if detector:
+                analyzed_leads_count = run_lead_analysis(detector.start_date, detector.end_date)
+            else:
+                analyzed_leads_count = run_lead_analysis()
+        except KeyboardInterrupt:
+            print_colored("\nWorkflow interrupted by user. Exiting.", "yellow")
+            sys.exit(0)
+        except Exception:
+            print_colored("\nLead analysis failed, but continuing to summary.", "yellow")
+
+        # Step 4: Run traffic attribution
+        attributed_leads_count = 0
+        try:
+            attributed_leads_count = run_traffic_attribution()
+        except KeyboardInterrupt:
+            print_colored("\nWorkflow interrupted by user. Exiting.", "yellow")
+            sys.exit(0)
+        except Exception:
+            print_colored("\nTraffic attribution failed, but continuing to summary.", "yellow")
+
+        # Step 5: Show final summary
+        show_final_summary(not_spam_count, spam_count, total_processed, analyzed_leads_count, attributed_leads_count, domains_updated, leads_file)
+```
+
+This code adds an option to run enhanced attribution analysis and includes the corresponding function definition.

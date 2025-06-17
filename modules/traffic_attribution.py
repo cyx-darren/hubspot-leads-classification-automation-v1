@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python
 """
 Traffic Attribution Module for HubSpot Automation v1
