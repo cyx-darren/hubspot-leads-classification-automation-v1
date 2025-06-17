@@ -3257,8 +3257,13 @@ class LeadAttributionAnalyzer:
         }
         
         payment_patterns = [
+            'payment released',
+            'outstanding invoice',
+            'payment notice',
+            'remittance advice',
+            'payment from',
+            'statement of account',
             r'payment (scheduled|has been released|is currently routing|released)',
-            r'remittance advice',
             r'provide your latest SOA',
             r'for our checking and payment',
             r'payment is (scheduled|due)',
