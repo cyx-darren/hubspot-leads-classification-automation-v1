@@ -3086,6 +3086,55 @@ class LeadAttributionAnalyzer:
         if current == total:
             print()  # New line when complete
 
+    def fetch_ticket_conversation_by_id(self, ticket_id: int) -> str:
+        """Fetch conversation content for a specific ticket ID"""
+        try:
+            FRESHDESK_API_KEY = os.environ.get('FRESHDESK_API_KEY')
+            FRESHDESK_DOMAIN = os.environ.get('FRESHDESK_DOMAIN')
+            
+            if not FRESHDESK_API_KEY or not FRESHDESK_DOMAIN:
+                return ""
+            
+            import requests
+            from requests.auth import HTTPBasicAuth
+            import time
+            
+            auth = HTTPBasicAuth(FRESHDESK_API_KEY, "X")
+            headers = {"Content-Type": "application/json"}
+            
+            # Get conversations for this specific ticket
+            conv_url = f"https://{FRESHDESK_DOMAIN}.freshdesk.com/api/v2/tickets/{ticket_id}/conversations"
+            
+            print_colored(f"    Fetching ticket #{ticket_id} conversations...", Colors.BLUE)
+            
+            response = requests.get(conv_url, headers=headers, auth=auth)
+            
+            if response.status_code == 429:
+                retry_after = int(response.headers.get('Retry-After', 30))
+                print_colored(f"    Rate limited. Waiting {retry_after} seconds...", Colors.YELLOW)
+                time.sleep(retry_after)
+                response = requests.get(conv_url, headers=headers, auth=auth)
+            
+            if response.status_code == 200:
+                conversations = response.json()
+                all_text = ""
+                
+                for conv in conversations:
+                    if isinstance(conv, dict):
+                        body_text = conv.get('body_text', '') or conv.get('body', '')
+                        if body_text:
+                            all_text += " " + body_text
+                
+                print_colored(f"    Retrieved {len(all_text)} chars from ticket #{ticket_id}", Colors.GREEN)
+                return all_text
+            else:
+                print_colored(f"    Error fetching ticket #{ticket_id}: {response.status_code}", Colors.YELLOW)
+                return ""
+                
+        except Exception as e:
+            print_colored(f"    Error fetching ticket #{ticket_id}: {e}", Colors.RED)
+            return ""
+
     def fetch_email_conversations_from_freshdesk(self, email: str) -> List[Dict]:
         """Fetch full email conversations from Freshdesk for a given email"""
         try:
@@ -3104,9 +3153,10 @@ class LeadAttributionAnalyzer:
             auth = HTTPBasicAuth(FRESHDESK_API_KEY, "X")
             headers = {"Content-Type": "application/json"}
             
-            # First, get tickets for this email
+            # First, get tickets for this email - use correct search syntax
             search_url = f"https://{FRESHDESK_DOMAIN}.freshdesk.com/api/v2/search/tickets"
-            params = {"query": f"email:'{email}'"}
+            # Updated query syntax - remove quotes around email
+            params = {"query": f"email:{email}"}
             
             print_colored(f"  Fetching tickets for {email}...", Colors.BLUE)
             response = requests.get(search_url, headers=headers, auth=auth, params=params)
@@ -3207,13 +3257,18 @@ class LeadAttributionAnalyzer:
         }
         
         payment_patterns = [
-            r'payment (scheduled|has been released|is currently routing)',
+            r'payment (scheduled|has been released|is currently routing|released)',
             r'remittance advice',
             r'provide your latest SOA',
             r'for our checking and payment',
             r'payment is (scheduled|due)',
             r'invoice.*payment',
-            r'outstanding.*payment'
+            r'outstanding.*payment',
+            r'payment.*easyprint',
+            r'remittance.*advice',
+            r'invoice.*\d+',
+            r'soa.*statement',
+            r'outstanding.*amount'
         ]
         
         repeat_patterns = [
@@ -3251,13 +3306,16 @@ class LeadAttributionAnalyzer:
             
             # Get email content from multiple sources
             subject = ''
+            ticket_subjects = ''
             content = ''
             
-            # Try different column names for subject
-            for subject_col in ['subject', 'email_subject', 'ticket_subjects']:
-                if subject_col in row and pd.notna(row[subject_col]):
-                    subject = str(row[subject_col]).lower()
-                    break
+            # Check single subject column
+            if 'subject' in row and pd.notna(row['subject']):
+                subject = str(row['subject']).lower()
+            
+            # Check ticket_subjects column (multiple subjects concatenated)
+            if 'ticket_subjects' in row and pd.notna(row['ticket_subjects']):
+                ticket_subjects = str(row['ticket_subjects']).lower()
             
             # Try different column names for existing content
             for content_col in ['conversation_snippets', 'email_content', 'content', 'original_reason']:
@@ -3266,8 +3324,24 @@ class LeadAttributionAnalyzer:
                     content += ' ' + existing_content
                     break
             
-            # Fetch fresh conversations from Freshdesk API
-            if email:
+            # Extract ticket IDs from original_reason if available
+            ticket_ids = []
+            if 'original_reason' in row and pd.notna(row['original_reason']):
+                original_reason = str(row['original_reason'])
+                # Extract ticket IDs using regex (typically #12345 format)
+                import re
+                ticket_id_matches = re.findall(r'#(\d+)', original_reason)
+                ticket_ids = [int(tid) for tid in ticket_id_matches[:3]]  # Limit to first 3
+            
+            # Fetch fresh conversations from Freshdesk API using ticket IDs
+            if ticket_ids:
+                api_fetch_count += 1
+                for ticket_id in ticket_ids:
+                    conversation_text = self.fetch_ticket_conversation_by_id(ticket_id)
+                    if conversation_text:
+                        content += ' ' + conversation_text.lower()
+            elif email:
+                # Fallback to email search if no ticket IDs found
                 api_fetch_count += 1
                 conversations = self.fetch_email_conversations_from_freshdesk(email)
                 
@@ -3277,8 +3351,8 @@ class LeadAttributionAnalyzer:
                     if body_text:
                         content += ' ' + body_text.lower()
             
-            # Now analyze all content (subject + existing content + fresh API content)
-            combined_text = (subject + ' ' + content).strip()
+            # Now analyze all content (subject + ticket_subjects + existing content + fresh API content)
+            combined_text = (subject + ' ' + ticket_subjects + ' ' + content).strip()
             
             print_colored(f"  Analyzing {len(combined_text)} characters of content", Colors.BLUE)
             
