@@ -3153,30 +3153,66 @@ class LeadAttributionAnalyzer:
             auth = HTTPBasicAuth(FRESHDESK_API_KEY, "X")
             headers = {"Content-Type": "application/json"}
             
-            # First, get tickets for this email - use correct search syntax
-            search_url = f"https://{FRESHDESK_DOMAIN}.freshdesk.com/api/v2/search/tickets"
-            # Updated query syntax - remove quotes around email
-            params = {"query": f"email:{email}"}
+            # Try multiple API approaches to find tickets
+            tickets = []
             
-            print_colored(f"  Fetching tickets for {email}...", Colors.BLUE)
-            response = requests.get(search_url, headers=headers, auth=auth, params=params)
+            # Approach 1: Try filter endpoint first (more reliable)
+            filter_url = f"https://{FRESHDESK_DOMAIN}.freshdesk.com/api/v2/tickets"
+            filter_params = {"email": email}
             
-            if response.status_code == 429:
-                retry_after = int(response.headers.get('Retry-After', 30))
-                print_colored(f"  Rate limited. Waiting {retry_after} seconds...", Colors.YELLOW)
-                time.sleep(retry_after)
-                response = requests.get(search_url, headers=headers, auth=auth, params=params)
+            print_colored(f"  Fetching tickets for {email} (filter approach)...", Colors.BLUE)
+            response = requests.get(filter_url, headers=headers, auth=auth, params=filter_params)
             
-            if response.status_code != 200:
-                print_colored(f"  Error fetching tickets for {email}: {response.status_code}", Colors.YELLOW)
-                return []
+            if response.status_code == 200:
+                tickets = response.json()
+                if tickets:
+                    print_colored(f"  Found {len(tickets)} tickets via filter", Colors.GREEN)
+                else:
+                    print_colored(f"  No tickets found via filter", Colors.BLUE)
+            else:
+                print_colored(f"  Filter approach failed: {response.status_code}", Colors.YELLOW)
+                
+                # Approach 2: Try search endpoint with different syntax
+                search_url = f"https://{FRESHDESK_DOMAIN}.freshdesk.com/api/v2/search/tickets"
+                
+                # Try different query formats
+                query_formats = [
+                    f'email:"{email}"',  # With quotes
+                    f"email:{email}",    # Without quotes
+                    f"requester_email:{email}",  # Alternative field
+                ]
+                
+                for query_format in query_formats:
+                    params = {"query": query_format}
+                    print_colored(f"  Trying search: {query_format}", Colors.BLUE)
+                    
+                    response = requests.get(search_url, headers=headers, auth=auth, params=params)
+                    
+                    if response.status_code == 429:
+                        retry_after = int(response.headers.get('Retry-After', 30))
+                        print_colored(f"    Rate limited. Waiting {retry_after} seconds...", Colors.YELLOW)
+                        time.sleep(retry_after)
+                        response = requests.get(search_url, headers=headers, auth=auth, params=params)
+                    
+                    if response.status_code == 200:
+                        tickets = response.json()
+                        if tickets:
+                            print_colored(f"    Search success: {len(tickets)} tickets", Colors.GREEN)
+                            break
+                        else:
+                            print_colored(f"    Search returned no results", Colors.BLUE)
+                    else:
+                        print_colored(f"    Search failed: {response.status_code}", Colors.YELLOW)
+                        # Log the error response for debugging
+                        if response.status_code == 400:
+                            error_text = response.text[:100] if response.text else "No error details"
+                            print_colored(f"    400 Error details: {error_text}", Colors.RED)
             
-            tickets = response.json()
             if not tickets:
-                print_colored(f"  No tickets found for {email}", Colors.BLUE)
+                print_colored(f"  No tickets found for {email} via any method", Colors.BLUE)
                 return []
             
-            print_colored(f"  Found {len(tickets)} tickets for {email}", Colors.GREEN)
+            print_colored(f"  Successfully found {len(tickets)} tickets for {email}", Colors.GREEN)
             
             # Get conversations for each ticket
             all_conversations = []
