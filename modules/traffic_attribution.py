@@ -3086,9 +3086,109 @@ class LeadAttributionAnalyzer:
         if current == total:
             print()  # New line when complete
 
+    def fetch_email_conversations_from_freshdesk(self, email: str) -> List[Dict]:
+        """Fetch full email conversations from Freshdesk for a given email"""
+        try:
+            # Import Freshdesk API credentials
+            FRESHDESK_API_KEY = os.environ.get('FRESHDESK_API_KEY')
+            FRESHDESK_DOMAIN = os.environ.get('FRESHDESK_DOMAIN')
+            
+            if not FRESHDESK_API_KEY or not FRESHDESK_DOMAIN:
+                print_colored(f"Warning: Freshdesk credentials not available for {email}", Colors.YELLOW)
+                return []
+            
+            import requests
+            from requests.auth import HTTPBasicAuth
+            import time
+            
+            auth = HTTPBasicAuth(FRESHDESK_API_KEY, "X")
+            headers = {"Content-Type": "application/json"}
+            
+            # First, get tickets for this email
+            search_url = f"https://{FRESHDESK_DOMAIN}.freshdesk.com/api/v2/search/tickets"
+            params = {"query": f"email:'{email}'"}
+            
+            print_colored(f"  Fetching tickets for {email}...", Colors.BLUE)
+            response = requests.get(search_url, headers=headers, auth=auth, params=params)
+            
+            if response.status_code == 429:
+                retry_after = int(response.headers.get('Retry-After', 30))
+                print_colored(f"  Rate limited. Waiting {retry_after} seconds...", Colors.YELLOW)
+                time.sleep(retry_after)
+                response = requests.get(search_url, headers=headers, auth=auth, params=params)
+            
+            if response.status_code != 200:
+                print_colored(f"  Error fetching tickets for {email}: {response.status_code}", Colors.YELLOW)
+                return []
+            
+            tickets = response.json()
+            if not tickets:
+                print_colored(f"  No tickets found for {email}", Colors.BLUE)
+                return []
+            
+            print_colored(f"  Found {len(tickets)} tickets for {email}", Colors.GREEN)
+            
+            # Get conversations for each ticket
+            all_conversations = []
+            for ticket in tickets[:3]:  # Limit to first 3 tickets to avoid API limits
+                ticket_id = ticket.get('id')
+                if not ticket_id:
+                    continue
+                
+                # Get conversations for this ticket
+                conv_url = f"https://{FRESHDESK_DOMAIN}.freshdesk.com/api/v2/tickets/{ticket_id}/conversations"
+                
+                conv_response = requests.get(conv_url, headers=headers, auth=auth)
+                
+                if conv_response.status_code == 429:
+                    retry_after = int(conv_response.headers.get('Retry-After', 30))
+                    print_colored(f"    Rate limited. Waiting {retry_after} seconds...", Colors.YELLOW)
+                    time.sleep(retry_after)
+                    conv_response = requests.get(conv_url, headers=headers, auth=auth)
+                
+                if conv_response.status_code == 200:
+                    conversations = conv_response.json()
+                    
+                    # Filter for customer conversations (not staff notes)
+                    for conv in conversations:
+                        if isinstance(conv, dict):
+                            from_email = conv.get('from_email', '').lower()
+                            body_text = conv.get('body_text', '') or conv.get('body', '')
+                            user_id = conv.get('user_id')
+                            
+                            # Skip empty conversations
+                            if not body_text:
+                                continue
+                            
+                            # Focus on customer messages (from the email we're analyzing)
+                            is_customer_message = (
+                                from_email and email.lower() in from_email
+                            ) or not user_id  # Messages without user_id are often customer messages
+                            
+                            if is_customer_message:
+                                all_conversations.append({
+                                    'ticket_id': ticket_id,
+                                    'subject': ticket.get('subject', ''),
+                                    'body_text': body_text,
+                                    'from_email': from_email,
+                                    'created_at': conv.get('created_at', ''),
+                                    'is_customer': True
+                                })
+                
+                # Small delay to avoid rate limiting
+                time.sleep(0.5)
+            
+            print_colored(f"  Retrieved {len(all_conversations)} customer conversations for {email}", Colors.GREEN)
+            return all_conversations
+            
+        except Exception as e:
+            print_colored(f"  Error fetching conversations for {email}: {e}", Colors.RED)
+            return []
+
     def analyze_email_content_for_attribution_override(self):
         """Analyze email content and subject lines to correct misattributions"""
         print_colored("Analyzing email content for attribution overrides...", Colors.BLUE)
+        print_colored("This will fetch actual email conversations from Freshdesk API...", Colors.BLUE)
         
         # Add new columns if they don't exist
         if 'drill_down' not in self.leads_df.columns:
@@ -3100,7 +3200,7 @@ class LeadAttributionAnalyzer:
         if 'original_attributed_source' not in self.leads_df.columns:
             self.leads_df['original_attributed_source'] = self.leads_df['attributed_source'].copy()
         
-        # Pattern definitions
+        # Enhanced pattern definitions for email BODY content
         ppc_campaign_patterns = {
             'lanyard_lp': r"You've Got a New Enquiry! \(Lanyard LP\)",
             'badge_lp': r"You've Got a New Enquiry! \(Badge LP\)"
@@ -3110,28 +3210,46 @@ class LeadAttributionAnalyzer:
             r'payment (scheduled|has been released|is currently routing)',
             r'remittance advice',
             r'provide your latest SOA',
-            r'for our checking and payment'
+            r'for our checking and payment',
+            r'payment is (scheduled|due)',
+            r'invoice.*payment',
+            r'outstanding.*payment'
         ]
         
         repeat_patterns = [
             r'(have|had|we) ordered .* from you',
-            r'^Hi \w+,',
+            r'Hi \w+,',  # Personal greetings like "Hi Darren,"
             r'our last order was',
             r'ordered before',
-            r'still have our artwork'
+            r'still have our artwork',
+            r'previous order',
+            r'last time we ordered',
+            r'reorder.*same.*design',
+            r'same as before'
         ]
         
         referral_patterns = [
             r'got your contact from my colleague[,\s]+(\w+)',
             r'taken over .* from (\w+)',
             r'(\w+) (shared|kindly shared) your details',
-            r'my colleague[,\s]+(\w+)[,\s]+who printed'
+            r'my colleague[,\s]+(\w+)[,\s]+who printed',
+            r'colleague.*recommended',
+            r'friend.*told me about',
+            r'referred.*by'
         ]
         
-        # Process each lead
+        # Process each lead with API fetching
+        total_leads = len(self.leads_df)
+        overrides_count = 0
+        api_fetch_count = 0
+        
         for idx, row in self.leads_df.iterrows():
-            # Get email content and subject (handle missing data)
-            # Check multiple possible column names for email content
+            email = row.get('email', '')
+            progress = f"[{idx + 1}/{total_leads}]"
+            
+            print_colored(f"{progress} Analyzing {email}", Colors.BLUE)
+            
+            # Get email content from multiple sources
             subject = ''
             content = ''
             
@@ -3141,62 +3259,94 @@ class LeadAttributionAnalyzer:
                     subject = str(row[subject_col]).lower()
                     break
             
-            # Try different column names for content
-            for content_col in ['conversation_snippets', 'email_content', 'content']:
+            # Try different column names for existing content
+            for content_col in ['conversation_snippets', 'email_content', 'content', 'original_reason']:
                 if content_col in row and pd.notna(row[content_col]):
-                    content = str(row[content_col]).lower()
+                    existing_content = str(row[content_col]).lower()
+                    content += ' ' + existing_content
                     break
+            
+            # Fetch fresh conversations from Freshdesk API
+            if email:
+                api_fetch_count += 1
+                conversations = self.fetch_email_conversations_from_freshdesk(email)
+                
+                # Add conversation content to analysis
+                for conv in conversations:
+                    body_text = conv.get('body_text', '')
+                    if body_text:
+                        content += ' ' + body_text.lower()
+            
+            # Now analyze all content (subject + existing content + fresh API content)
+            combined_text = (subject + ' ' + content).strip()
+            
+            print_colored(f"  Analyzing {len(combined_text)} characters of content", Colors.BLUE)
             
             # Check PPC campaigns first (highest priority)
             found_override = False
             for campaign_name, pattern in ppc_campaign_patterns.items():
-                if re.search(pattern, subject, re.IGNORECASE) or re.search(pattern, content, re.IGNORECASE):
+                if re.search(pattern, combined_text, re.IGNORECASE):
                     self.leads_df.loc[idx, 'attributed_source'] = 'PPC'
                     self.leads_df.loc[idx, 'drill_down'] = f'Google Ads - {campaign_name}'
                     self.leads_df.loc[idx, 'email_content_override'] = True
-                    self.leads_df.loc[idx, 'override_reason'] = f'PPC campaign detected: {campaign_name}'
+                    self.leads_df.loc[idx, 'override_reason'] = f'PPC campaign detected: {campaign_name} (from email body)'
                     found_override = True
+                    overrides_count += 1
+                    print_colored(f"  ✓ PPC campaign override: {campaign_name}", Colors.GREEN)
                     break
             
             # Check for payment emails (indicates existing customer)
             if not found_override:
                 for pattern in payment_patterns:
-                    if re.search(pattern, content, re.IGNORECASE):
+                    match = re.search(pattern, combined_text, re.IGNORECASE)
+                    if match:
                         self.leads_df.loc[idx, 'attributed_source'] = 'Direct'
                         self.leads_df.loc[idx, 'email_content_override'] = True
-                        self.leads_df.loc[idx, 'override_reason'] = 'Payment-related communication (existing customer)'
+                        self.leads_df.loc[idx, 'override_reason'] = f'Payment-related communication: "{match.group()}" (existing customer)'
                         found_override = True
+                        overrides_count += 1
+                        print_colored(f"  ✓ Payment override: {match.group()}", Colors.GREEN)
                         break
             
             # Check for repeat customers
             if not found_override:
                 for pattern in repeat_patterns:
-                    if re.search(pattern, content, re.IGNORECASE):
+                    match = re.search(pattern, combined_text, re.IGNORECASE)
+                    if match:
                         self.leads_df.loc[idx, 'attributed_source'] = 'Direct'
                         self.leads_df.loc[idx, 'email_content_override'] = True
-                        self.leads_df.loc[idx, 'override_reason'] = 'Repeat customer identified'
+                        self.leads_df.loc[idx, 'override_reason'] = f'Repeat customer pattern: "{match.group()}"'
                         found_override = True
+                        overrides_count += 1
+                        print_colored(f"  ✓ Repeat customer override: {match.group()}", Colors.GREEN)
                         break
             
             # Check for referrals
             if not found_override:
                 for pattern in referral_patterns:
-                    match = re.search(pattern, content, re.IGNORECASE)
+                    match = re.search(pattern, combined_text, re.IGNORECASE)
                     if match:
                         self.leads_df.loc[idx, 'attributed_source'] = 'Referral'
                         self.leads_df.loc[idx, 'email_content_override'] = True
                         # Try to extract referrer name
                         referrer = match.group(1) if match.groups() else 'colleague'
                         self.leads_df.loc[idx, 'drill_down'] = f'Referral from {referrer}'
-                        self.leads_df.loc[idx, 'override_reason'] = f'Referral detected from {referrer}'
+                        self.leads_df.loc[idx, 'override_reason'] = f'Referral detected: "{match.group()}" from {referrer}'
+                        found_override = True
+                        overrides_count += 1
+                        print_colored(f"  ✓ Referral override: {referrer}", Colors.GREEN)
                         break
+            
+            if not found_override:
+                print_colored(f"  → No override patterns found", Colors.BLUE)
         
         # Log summary of changes
-        overrides = self.leads_df[self.leads_df['email_content_override'] == True]
-        print_colored(f'Email content analysis completed:', Colors.GREEN)
-        print_colored(f'Total overrides: {len(overrides)}', Colors.GREEN)
+        print_colored(f'\nEmail content analysis completed:', Colors.GREEN)
+        print_colored(f'API fetches performed: {api_fetch_count}/{total_leads}', Colors.BLUE)
+        print_colored(f'Total overrides: {overrides_count}', Colors.GREEN)
         
-        if len(overrides) > 0:
+        if overrides_count > 0:
+            overrides = self.leads_df[self.leads_df['email_content_override'] == True]
             print_colored('Attribution changes:', Colors.BLUE)
             for source in overrides['attributed_source'].value_counts().index:
                 count = len(overrides[overrides['attributed_source'] == source])
