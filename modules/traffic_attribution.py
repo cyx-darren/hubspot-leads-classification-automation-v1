@@ -3081,6 +3081,122 @@ class LeadAttributionAnalyzer:
         if current == total:
             print()  # New line when complete
 
+    def analyze_email_content_for_attribution_override(self):
+        """Analyze email content and subject lines to correct misattributions"""
+        print_colored("Analyzing email content for attribution overrides...", Colors.BLUE)
+        
+        # Add new columns if they don't exist
+        if 'drill_down' not in self.leads_df.columns:
+            self.leads_df['drill_down'] = ''
+        if 'email_content_override' not in self.leads_df.columns:
+            self.leads_df['email_content_override'] = False
+        if 'override_reason' not in self.leads_df.columns:
+            self.leads_df['override_reason'] = ''
+        if 'original_attributed_source' not in self.leads_df.columns:
+            self.leads_df['original_attributed_source'] = self.leads_df['attributed_source'].copy()
+        
+        # Pattern definitions
+        ppc_campaign_patterns = {
+            'lanyard_lp': r"You've Got a New Enquiry! \(Lanyard LP\)",
+            'badge_lp': r"You've Got a New Enquiry! \(Badge LP\)"
+        }
+        
+        payment_patterns = [
+            r'payment (scheduled|has been released|is currently routing)',
+            r'remittance advice',
+            r'provide your latest SOA',
+            r'for our checking and payment'
+        ]
+        
+        repeat_patterns = [
+            r'(have|had|we) ordered .* from you',
+            r'^Hi \w+,',
+            r'our last order was',
+            r'ordered before',
+            r'still have our artwork'
+        ]
+        
+        referral_patterns = [
+            r'got your contact from my colleague[,\s]+(\w+)',
+            r'taken over .* from (\w+)',
+            r'(\w+) (shared|kindly shared) your details',
+            r'my colleague[,\s]+(\w+)[,\s]+who printed'
+        ]
+        
+        # Process each lead
+        for idx, row in self.leads_df.iterrows():
+            # Get email content and subject (handle missing data)
+            # Check multiple possible column names for email content
+            subject = ''
+            content = ''
+            
+            # Try different column names for subject
+            for subject_col in ['subject', 'email_subject', 'ticket_subjects']:
+                if subject_col in row and pd.notna(row[subject_col]):
+                    subject = str(row[subject_col]).lower()
+                    break
+            
+            # Try different column names for content
+            for content_col in ['conversation_snippets', 'email_content', 'content']:
+                if content_col in row and pd.notna(row[content_col]):
+                    content = str(row[content_col]).lower()
+                    break
+            
+            # Check PPC campaigns first (highest priority)
+            found_override = False
+            for campaign_name, pattern in ppc_campaign_patterns.items():
+                if re.search(pattern, subject, re.IGNORECASE) or re.search(pattern, content, re.IGNORECASE):
+                    self.leads_df.loc[idx, 'attributed_source'] = 'PPC'
+                    self.leads_df.loc[idx, 'drill_down'] = f'Google Ads - {campaign_name}'
+                    self.leads_df.loc[idx, 'email_content_override'] = True
+                    self.leads_df.loc[idx, 'override_reason'] = f'PPC campaign detected: {campaign_name}'
+                    found_override = True
+                    break
+            
+            # Check for payment emails (indicates existing customer)
+            if not found_override:
+                for pattern in payment_patterns:
+                    if re.search(pattern, content, re.IGNORECASE):
+                        self.leads_df.loc[idx, 'attributed_source'] = 'Direct'
+                        self.leads_df.loc[idx, 'email_content_override'] = True
+                        self.leads_df.loc[idx, 'override_reason'] = 'Payment-related communication (existing customer)'
+                        found_override = True
+                        break
+            
+            # Check for repeat customers
+            if not found_override:
+                for pattern in repeat_patterns:
+                    if re.search(pattern, content, re.IGNORECASE):
+                        self.leads_df.loc[idx, 'attributed_source'] = 'Direct'
+                        self.leads_df.loc[idx, 'email_content_override'] = True
+                        self.leads_df.loc[idx, 'override_reason'] = 'Repeat customer identified'
+                        found_override = True
+                        break
+            
+            # Check for referrals
+            if not found_override:
+                for pattern in referral_patterns:
+                    match = re.search(pattern, content, re.IGNORECASE)
+                    if match:
+                        self.leads_df.loc[idx, 'attributed_source'] = 'Referral'
+                        self.leads_df.loc[idx, 'email_content_override'] = True
+                        # Try to extract referrer name
+                        referrer = match.group(1) if match.groups() else 'colleague'
+                        self.leads_df.loc[idx, 'drill_down'] = f'Referral from {referrer}'
+                        self.leads_df.loc[idx, 'override_reason'] = f'Referral detected from {referrer}'
+                        break
+        
+        # Log summary of changes
+        overrides = self.leads_df[self.leads_df['email_content_override'] == True]
+        print_colored(f'Email content analysis completed:', Colors.GREEN)
+        print_colored(f'Total overrides: {len(overrides)}', Colors.GREEN)
+        
+        if len(overrides) > 0:
+            print_colored('Attribution changes:', Colors.BLUE)
+            for source in overrides['attributed_source'].value_counts().index:
+                count = len(overrides[overrides['attributed_source'] == source])
+                print_colored(f'  → {source}: {count} leads', Colors.GREEN)
+
     def display_key_insights(self):
         """Display key insights to console with colored formatting"""
         print_colored("\n=== KEY INSIGHTS ===", Colors.BOLD + Colors.BLUE)
