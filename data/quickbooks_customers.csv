@@ -109,7 +109,7 @@ customer_id,name,company_name,email,domain,create_time,last_updated
 3253,,IMC Industrial Group,angelawee@imcindustrialgroup.com,imcindustrialgroup.com,2023-06-18T22:38:32-07:00,2023-08-10T01:59:00-07:00
 4979,,,agdiloy@yahoo.com,yahoo.com,2025-05-26T18:12:52-07:00,2025-05-26T23:04:08-07:00
 4065,,NATIONAL UNIVERSITY OF SINGAPORE,medmerch@nus.edu.sg,nus.edu.sg,2024-06-24T01:26:52-07:00,2025-05-19T17:58:35-07:00
-4953,,Rhapsody Concept Pte Ltd,angelis.chen@rhapsodyconcept.com.sg,rhapsodyconcept.com.sg,2025-05-09T04:33:11-07:00,2025-06-02T00:31:03-07:00
+4953,,Rhapsody Concept Pte Ltd,angelis.chen@rhapsodyconcept.com.sg,rhapsodyconcept.com.sg,2025-05-09T04:33:11-07:00,2025-06-17T05:00:44-07:00
 3282,,Business Show Media Ltd,inah.cruz@singaporebusinessshow.sg,singaporebusinessshow.sg,2023-07-03T01:13:38-07:00,2023-08-10T18:37:02-07:00
 4134,,,anika.kneifel_heilemann@lidl.sg,lidl.sg,2024-07-25T01:12:58-07:00,2024-10-10T18:19:43-07:00
 4158,,The Astronauts Collective,aniket.m@hellotac.org,hellotac.org,2024-08-06T19:08:24-07:00,2024-08-06T20:57:33-07:00
@@ -1238,7 +1238,7 @@ customer_id,name,company_name,email,domain,create_time,last_updated
 4958,,,michelle.sy@tcgconstruction.com,tcgconstruction.com,2025-05-13T00:29:05-07:00,2025-05-13T00:34:47-07:00
 1427,,90 Seconds,michelle.tan@puig.com,puig.com,2023-03-26T09:40:02-07:00,2023-09-10T19:12:36-07:00
 3738,,SCALA,michelle.wong@scala.com.sg,scala.com.sg,2024-01-18T22:55:52-08:00,2024-04-01T04:02:48-07:00
-3335,,The Law Society of Singapore,michelleyeo@lawsoc.org.sg,lawsoc.org.sg,2023-07-25T21:36:34-07:00,2023-09-06T02:06:11-07:00
+3335,,The Law Society of Singapore,michelleyeo@lawsoc.org.sg,lawsoc.org.sg,2023-07-25T21:36:34-07:00,2025-06-17T03:25:37-07:00
 3503,,Hyperganic Pte Ltd,michelle@hyperganic.com,hyperganic.com,2023-09-27T18:34:27-07:00,2023-09-27T18:48:57-07:00
 1429,,Dyson Operations Pte Ltd,michy.ng@dyson.com,dyson.com,2023-03-26T09:40:03-07:00,2023-11-29T17:43:36-08:00
 4938,,,mickey5314ninja@gmail.com,gmail.com,2025-05-01T19:34:54-07:00,2025-05-13T03:15:01-07:00
@@ -2040,7 +2040,7 @@ customer_id,name,company_name,email,domain,create_time,last_updated
 334,,,s_hanmuga_m@yahoo.com,yahoo.com,2023-03-26T07:36:46-07:00,2023-04-21T06:46:49-07:00
 3839,,,tanshanlyn@gmail.com,gmail.com,2024-03-10T18:14:12-07:00,2024-03-10T21:28:45-07:00
 2628,,Zenyum,shas@zenyum.com,zenyum.com,2023-03-26T09:41:49-07:00,2023-03-26T09:41:49-07:00
-2629,,LucaNet (ASEAN) Pte. Ltd.,shandyl@lucanet.com,lucanet.com,2023-03-26T09:41:49-07:00,2025-06-05T18:27:00-07:00
+2629,,LucaNet (ASEAN) Pte. Ltd.,shandyl@lucanet.com,lucanet.com,2023-03-26T09:41:49-07:00,2025-06-17T02:17:14-07:00
 2630,,Cordlife Group Limited,shane.chua@cordlife.com,cordlife.com,2023-03-26T09:41:49-07:00,2024-01-15T00:33:12-08:00
 3601,,MGCA Cafe SG Pte. Ltd.,shanell-tan@tims-mgca.com,tims-mgca.com,2023-10-30T18:48:16-07:00,2023-12-20T17:34:47-08:00
 3759,,,shanelle@theworkboulevard.com,theworkboulevard.com,2024-01-30T19:21:32-08:00,2024-02-08T01:30:47-08:00
@@ -2101,6 +2101,7 @@ customer_id,name,company_name,email,domain,create_time,last_updated
 3368,,BEDOK YOUTH SOCIETY for THE DISABLED,shiffa@bysd.sg,bysd.sg,2023-08-09T18:10:44-07:00,2023-08-10T23:44:10-07:00
 3481,,,shikinmnh@gmail.com,gmail.com,2023-09-20T04:50:46-07:00,2023-09-20T17:44:07-07:00
 2673,,Faith Community Baptist Church,shirlene.lim@fcbc.org.sg,fcbc.org.sg,2023-03-26T09:41:51-07:00,2023-03-26T09:41:51-07:00
+5009,,Hatch,shon@hatch.com.sg,hatch.com.sg,2025-06-17T04:31:41-07:00,2025-06-17T04:37:04-07:00
 3690,,,shraddha.k@ariesmar.com,ariesmar.com,2023-12-19T20:03:04-08:00,2024-02-19T20:19:34-08:00
 2678,,Revolut SG,shruti.agarwal@revolut.com,revolut.com,2023-03-26T09:41:51-07:00,2024-05-22T18:21:06-07:00
 4912,,WBCSD Asia Pacific,kesavan@wbcsd.org,wbcsd.org,2025-04-14T23:19:28-07:00,2025-05-30T02:08:09-07:00
