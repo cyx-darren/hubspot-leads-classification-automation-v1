@@ -1,5 +1,5 @@
 source,lead_count,percentage,avg_confidence,min_confidence,max_confidence,high_confidence_count,high_confidence_percentage,top_product,top_product_mentions
-SEO,71,58.7,100.0,100.0,100.0,71,100.0,Lanyards (With Printing),12
+SEO,67,55.4,100.0,100.0,100.0,67,100.0,Lanyards (With Printing),8
 Referral,34,28.1,50.6,26.0,90.0,5,14.7,,0
+Direct,11,9.1,92.2,40.0,100.0,9,81.8,Lanyards (With Printing),4
 PPC,9,7.4,98.9,90.0,100.0,9,100.0,Lanyards (With Printing),8
-Direct,7,5.8,87.7,40.0,100.0,5,71.4,,0
